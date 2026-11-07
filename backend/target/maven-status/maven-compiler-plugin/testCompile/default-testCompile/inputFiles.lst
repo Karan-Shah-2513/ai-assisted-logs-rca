@@ -1,0 +1,3 @@
+/home/karan/projects/ai-assisted-logs-rca/backend/src/test/java/com/airca/ai/AiRcaServiceTest.java
+/home/karan/projects/ai-assisted-logs-rca/backend/src/test/java/com/airca/ai/TextEmbeddingServiceTest.java
+/home/karan/projects/ai-assisted-logs-rca/backend/src/test/java/com/airca/deduplication/RedisDeduplicatorServiceTest.java
