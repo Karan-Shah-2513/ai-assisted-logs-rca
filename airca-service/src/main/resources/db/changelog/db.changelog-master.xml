@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                   https://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-latest.xsd">
+    <property name="app_user" value="airca_app"/>
+    <property name="app_password" value="airca_app"/>
+
+    <changeSet id="001-init-pgvector" author="airca">
+        <sqlFile path="db/changelog/001-init-pgvector.sql"
+                 relativeToChangelogFile="false"
+                 stripComments="false"/>
+    </changeSet>
+    <changeSet id="002-seed-data" author="airca">
+        <sqlFile path="db/changelog/002-seed-data.sql"
+                 relativeToChangelogFile="false"
+                 stripComments="false"/>
+    </changeSet>
+    <changeSet id="003-migrate-vector-768" author="airca">
+        <sqlFile path="db/changelog/003-migrate-vector-768.sql"
+                 relativeToChangelogFile="false"
+                 stripComments="false"/>
+    </changeSet>
+    <changeSet id="004-add-runbook-chunk-source-and-incident" author="airca">
+        <sqlFile path="db/changelog/004-add-runbook-chunk-source-and-incident.sql"
+                 relativeToChangelogFile="false"
+                 stripComments="false"/>
+    </changeSet>
+    <changeSet id="005-preserve-runbook-chunk-on-incident-delete" author="airca">
+        <sqlFile path="db/changelog/005-preserve-runbook-chunk-on-incident-delete.sql"
+                 relativeToChangelogFile="false"
+                 stripComments="false"
+                 splitStatements="false"/>
+    </changeSet>
+    <changeSet id="006-enforce-app-role-rls" author="airca">
+        <sqlFile path="db/changelog/006-enforce-app-role-rls.sql"
+                 relativeToChangelogFile="false"
+                 stripComments="false"
+                 splitStatements="false"/>
+    </changeSet>
+</databaseChangeLog>

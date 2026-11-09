@@ -1,0 +1,22 @@
+server:
+  port: ${SERVER_PORT:8083}
+
+spring:
+  application:
+    name: auth-service
+
+tenant:
+  airca:
+    enabled: ${AIRCA_SHIPPER_ENABLED:true}
+    airca-url: ${AIRCA_LOGS_URL:http://localhost:8080/api/v1/logs}
+    tenant-id: ${TENANT_ID:22222222-2222-2222-2222-222222222222}
+    api-key: ${TENANT_API_KEY:betapay-secret-key-2222}
+    service-name: ${SERVICE_NAME:auth-service}
+    connect-timeout-ms: ${AIRCA_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${AIRCA_READ_TIMEOUT_MS:5000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

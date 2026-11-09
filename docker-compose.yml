@@ -2,15 +2,18 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_DB: airca
-      POSTGRES_USER: airca
-      POSTGRES_PASSWORD: airca
+      POSTGRES_DB: ${POSTGRES_DB:-airca}
+      POSTGRES_USER: ${POSTGRES_USER:-airca}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airca}
+      AIRCA_APP_USER: ${SPRING_DATASOURCE_USERNAME:-airca_app}
+      AIRCA_APP_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-airca_app}
     ports:
       - "5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      - ./airca-service/src/main/resources/db/init-app-role.sh:/docker-entrypoint-initdb.d/01-init-app-role.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U airca -d airca"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-airca} -d ${POSTGRES_DB:-airca}"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -49,6 +52,103 @@ services:
       interval: 10s
       timeout: 10s
       retries: 12
+
+  airca-service:
+    build:
+      context: ./airca-service
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: ${SPRING_DATASOURCE_URL:-jdbc:postgresql://postgres:5432/airca}
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-airca_app}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:-airca_app}
+      SPRING_LIQUIBASE_URL: ${SPRING_LIQUIBASE_URL:-jdbc:postgresql://postgres:5432/airca}
+      SPRING_LIQUIBASE_USER: ${SPRING_LIQUIBASE_USER:-${POSTGRES_USER:-airca}}
+      SPRING_LIQUIBASE_PASSWORD: ${SPRING_LIQUIBASE_PASSWORD:-${POSTGRES_PASSWORD:-airca}}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AIRCA_REPOSITORY_ROOT: /workspace/repository
+      REDIS_DEDUP_TTL_MINUTES: 60
+      AIRCA_TENANT_API_KEY_ALPHAFIN: "alphafin-secret-key-1111"
+      AIRCA_TENANT_API_KEY_BETAPAY: "betapay-secret-key-2222"
+    volumes:
+      - ./.git:/workspace/repository/.git:ro
+      - ./tenants:/workspace/repository/tenants:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  order-service:
+    build:
+      context: ./tenants/tenant1-alphafin/order-service
+      dockerfile: Dockerfile
+    ports:
+      - "8081:8081"
+    environment:
+      SERVER_PORT: 8081
+      TENANT_ID: "11111111-1111-1111-1111-111111111111"
+      TENANT_API_KEY: "alphafin-secret-key-1111"
+      SERVICE_NAME: "order-service"
+      AIRCA_LOGS_URL: "${AIRCA_LOGS_URL:-http://airca-service:8080/api/v1/logs}"
+    depends_on:
+      airca-service:
+        condition: service_started
+
+  ledger-service:
+    build:
+      context: ./tenants/tenant1-alphafin/ledger-service
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8082"
+    environment:
+      SERVER_PORT: 8082
+      TENANT_ID: "11111111-1111-1111-1111-111111111111"
+      TENANT_API_KEY: "alphafin-secret-key-1111"
+      SERVICE_NAME: "ledger-service"
+      AIRCA_LOGS_URL: "${AIRCA_LOGS_URL:-http://airca-service:8080/api/v1/logs}"
+    depends_on:
+      airca-service:
+        condition: service_started
+
+  auth-service:
+    build:
+      context: ./tenants/tenant2-betapay/auth-service
+      dockerfile: Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      SERVER_PORT: 8083
+      TENANT_ID: "22222222-2222-2222-2222-222222222222"
+      TENANT_API_KEY: "betapay-secret-key-2222"
+      SERVICE_NAME: "auth-service"
+      AIRCA_LOGS_URL: "${AIRCA_LOGS_URL:-http://airca-service:8080/api/v1/logs}"
+    depends_on:
+      airca-service:
+        condition: service_started
+
+  wallet-service:
+    build:
+      context: ./tenants/tenant2-betapay/wallet-service
+      dockerfile: Dockerfile
+    ports:
+      - "8084:8084"
+    environment:
+      SERVER_PORT: 8084
+      TENANT_ID: "22222222-2222-2222-2222-222222222222"
+      TENANT_API_KEY: "betapay-secret-key-2222"
+      SERVICE_NAME: "wallet-service"
+      AIRCA_LOGS_URL: "${AIRCA_LOGS_URL:-http://airca-service:8080/api/v1/logs}"
+    depends_on:
+      airca-service:
+        condition: service_started
 
 volumes:
   postgres-data:

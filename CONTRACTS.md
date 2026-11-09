@@ -3,9 +3,9 @@
 ## 1. Directory & Layer Ownership
 - **Sub-Agent 1 (`Infra-DB-Backend-Core`)**:
   - `/docker-compose.yml`
-  - `/backend/pom.xml`
-  - `/backend/src/main/resources/application.yml`
-  - `/backend/src/main/resources/db/changelog/**` (Liquibase migrations & seed data)
+  - `/airca-service/pom.xml`
+  - `/airca-service/src/main/resources/application.yml`
+  - `/airca-service/src/main/resources/db/changelog/**` (Liquibase migrations & seed data)
   - Base packages:
     - `com.airca.config` (Kafka, Redis, WebMvc, DataSource, Security/CORS)
     - `com.airca.multitenancy` (TenantContext, TenantFilter, DataSourceTenantAspect)

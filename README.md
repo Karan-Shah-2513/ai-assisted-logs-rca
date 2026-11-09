@@ -85,7 +85,7 @@ docker compose ps
 
 ### 3. Run Backend (Spring Boot 3.3.x)
 ```bash
-cd backend
+cd airca-service
 mvn spring-boot:run
 ```
 *Note: If `AI_API_KEY` or `OPENAI_API_KEY` is not provided, the backend automatically uses its high-fidelity deterministic fallback RCA engine, ensuring zero crashes.*
@@ -152,6 +152,6 @@ curl -X GET http://localhost:8080/api/v1/telemetry \
 ---
 
 ## Verification & Test Results
-- Backend Unit & Integration Tests: `cd backend && mvn clean test` (4 tests passed, 0 failures)
+- Backend Unit & Integration Tests: `cd airca-service && mvn clean test` (4 tests passed, 0 failures)
 - Frontend Build: `cd frontend && npm run build` (Clean production bundle built with 0 TypeScript errors)
 - Docker Compose validation: `docker compose config --quiet` (Valid configuration)
