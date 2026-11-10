@@ -10,6 +10,7 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 
@@ -20,6 +21,7 @@ public class TenantApiKeyService {
 
     private final Map<UUID, Set<String>> tenantKeyMap = new ConcurrentHashMap<>();
 
+    @Autowired
     public TenantApiKeyService(
             TenantSecurityProperties properties,
             Environment environment) {

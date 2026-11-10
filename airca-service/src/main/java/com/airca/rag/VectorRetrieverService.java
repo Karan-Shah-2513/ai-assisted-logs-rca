@@ -71,7 +71,7 @@ public class VectorRetrieverService {
     }
 
     @Transactional
-    public String retrieveContext(Incident incident) {
+    public RetrievalResult retrieve(Incident incident) {
         ensureRunbooksIndexed(incident.getTenantId());
 
         String queryText = incident.getServiceName() + "\n" + incident.getSanitizedStackTrace();
@@ -128,10 +128,11 @@ public class VectorRetrieverService {
                 minSimilarity,
                 vector);
 
+        String relevantDiff = gitCommitInspectorService.findRelevantDiff(
+                incident.getServiceName(), incident.getSanitizedStackTrace());
+
         StringBuilder context = new StringBuilder();
-        context.append("Relevant git change:\n")
-                .append(gitCommitInspectorService.findRelevantDiff(
-                        incident.getServiceName(), incident.getSanitizedStackTrace()));
+        context.append("Relevant git change:\n").append(relevantDiff);
 
         for (RunbookMatch match : vectorMatches) {
             context.append("\n\nVector-matched runbook (similarity ")
@@ -157,7 +158,13 @@ public class VectorRetrieverService {
                     .append(", resolved activity last seen: ").append(match.lastSeen()).append(")")
                     .append("\n").append(match.stackTrace());
         }
-        return context.toString();
+        return new RetrievalResult(context.toString(), vectorMatches, pastIncidents, relevantDiff);
+    }
+
+    @Transactional
+    public String retrieveContext(Incident incident) {
+        RetrievalResult result = retrieve(incident);
+        return result != null ? result.context() : "";
     }
 
     @Transactional

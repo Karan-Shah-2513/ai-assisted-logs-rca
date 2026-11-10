@@ -10,4 +10,14 @@ public record AiRcaReport(
         int confidenceScore,
         String severity,
         String suggestedRemediation) {
+
+    public AiRcaReport withMatchedRunbook(String matchedRunbook) {
+        return new AiRcaReport(
+                rootCauseSummary,
+                suspectedCommit,
+                matchedRunbook,
+                confidenceScore,
+                severity,
+                suggestedRemediation);
+    }
 }

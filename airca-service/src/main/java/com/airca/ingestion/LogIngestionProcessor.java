@@ -12,6 +12,7 @@ import com.airca.websocket.StompBroadcasterService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -28,6 +29,7 @@ public class LogIngestionProcessor {
     private final StompBroadcasterService broadcasterService;
     private final TextEmbeddingService embeddingService;
 
+    @Autowired
     public LogIngestionProcessor(
             RedisDeduplicatorService deduplicatorService,
             LogSanitizer sanitizer,

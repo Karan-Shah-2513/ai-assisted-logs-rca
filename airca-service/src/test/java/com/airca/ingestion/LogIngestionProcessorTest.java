@@ -1,5 +1,6 @@
 package com.airca.ingestion;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -24,6 +25,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -39,6 +41,23 @@ class LogIngestionProcessorTest {
     private LogIngestionProcessor processor;
 
     private final UUID tenantId = UUID.fromString("11111111-1111-1111-1111-111111111111");
+
+    @Test
+    void createsSpringBeanUsingAutowiredConstructor() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(LogIngestionProcessor.class)
+                .withBean(RedisDeduplicatorService.class, () -> mock(RedisDeduplicatorService.class))
+                .withBean(LogSanitizer.class, () -> mock(LogSanitizer.class))
+                .withBean(IncidentRepository.class, () -> mock(IncidentRepository.class))
+                .withBean(AiRcaService.class, () -> mock(AiRcaService.class))
+                .withBean(ObjectMapper.class, ObjectMapper::new)
+                .withBean(StompBroadcasterService.class, () -> mock(StompBroadcasterService.class))
+                .withBean(TextEmbeddingService.class, () -> mock(TextEmbeddingService.class))
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(LogIngestionProcessor.class);
+                });
+    }
 
     @BeforeEach
     void setUp() {

@@ -71,7 +71,6 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      AI_API_KEY: ${AI_API_KEY:-${OPENAI_API_KEY:-}}
       AIRCA_REPOSITORY_ROOT: /workspace/repository
       REDIS_DEDUP_TTL_MINUTES: 60
       AIRCA_TENANT_API_KEY_ALPHAFIN: "alphafin-secret-key-1111"
@@ -89,8 +88,8 @@ services:
 
   order-service:
     build:
-      context: ./tenants/tenant1-alphafin/order-service
-      dockerfile: Dockerfile
+      context: ./tenants
+      dockerfile: tenant1-alphafin/order-service/Dockerfile
     ports:
       - "8081:8081"
     environment:
@@ -105,8 +104,8 @@ services:
 
   ledger-service:
     build:
-      context: ./tenants/tenant1-alphafin/ledger-service
-      dockerfile: Dockerfile
+      context: ./tenants
+      dockerfile: tenant1-alphafin/ledger-service/Dockerfile
     ports:
       - "8082:8082"
     environment:
@@ -121,8 +120,8 @@ services:
 
   auth-service:
     build:
-      context: ./tenants/tenant2-betapay/auth-service
-      dockerfile: Dockerfile
+      context: ./tenants
+      dockerfile: tenant2-betapay/auth-service/Dockerfile
     ports:
       - "8083:8083"
     environment:
@@ -137,8 +136,8 @@ services:
 
   wallet-service:
     build:
-      context: ./tenants/tenant2-betapay/wallet-service
-      dockerfile: Dockerfile
+      context: ./tenants
+      dockerfile: tenant2-betapay/wallet-service/Dockerfile
     ports:
       - "8084:8084"
     environment:

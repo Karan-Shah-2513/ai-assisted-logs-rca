@@ -12,6 +12,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.mock.env.MockEnvironment;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+
 class TenantApiKeyServiceTest {
 
     private final UUID alphaFinId = UUID.fromString("11111111-1111-1111-1111-111111111111");
@@ -99,5 +102,16 @@ class TenantApiKeyServiceTest {
         TenantApiKeyService service = new TenantApiKeyService(props, new MockEnvironment());
         assertEquals(Optional.of(alphaFinId), service.resolveTenantId("alpha-valid-key"));
         assertFalse(service.resolveTenantId("some-key").isPresent());
+    }
+
+    @Test
+    @DisplayName("Instantiates TenantApiKeyService bean successfully within Spring ApplicationContext")
+    void testSpringBeanInstantiation() {
+        new ApplicationContextRunner()
+                .withUserConfiguration(TenantSecurityProperties.class, TenantApiKeyService.class)
+                .run(context -> {
+                    assertThat(context).hasNotFailed();
+                    assertThat(context).hasSingleBean(TenantApiKeyService.class);
+                });
     }
 }

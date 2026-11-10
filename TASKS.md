@@ -22,3 +22,6 @@
 - [x] Task 22: Add tenant bug trigger/burst controls, RCA inspection, and verified resolution UI | Complexity: Medium
 - [x] Task 23: Document exact demo commands, endpoints, broken-code locations, and end-to-end startup | Complexity: Low
 - [x] Task 24: Replace direct Gemini embedding calls with the official google-genai Java SDK after reviewing current AI Studio docs; preserve 768-dimension validation, matching retrieval/query behavior, and focused tests with minimal scope | Complexity: Medium
+- [x] Task 25: Build all four tenant service JARs in multi-stage Docker builds from the Maven reactor and keep runtime images JRE-only | Complexity: Medium
+- [x] Task 26: Replace OpenAI RCA calls with hosted Gemma 4 generation via the official Google GenAI SDK and existing GEMINI_API_KEY; configure a supported Gemma 4 model ID and preserve structured RCA, deterministic fallback, tests, and docs | Complexity: Medium
+- [x] Task 27: Preserve the top qualifying structured RAG runbook match as the authoritative report/UI value, independent of Gemma output, and cover matched/no-match/fallback behavior | Complexity: Medium

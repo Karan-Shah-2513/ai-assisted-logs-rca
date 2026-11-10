@@ -237,6 +237,100 @@ class VectorRetrieverServiceTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void retrieve_returnsStructuredResultWithTopQualifyingRunbookCandidate() {
+        Incident incident = new Incident();
+        incident.setTenantId(tenantId);
+        incident.setServiceName("order-service");
+        incident.setSanitizedStackTrace("java.lang.RuntimeException: checkout timeout");
+
+        List<Double> queryVec = Collections.nCopies(768, 0.01);
+        String queryVecLiteral = "[0.01,0.01]";
+        when(embeddingService.embed(anyString())).thenReturn(queryVec);
+        when(embeddingService.toVectorLiteral(queryVec)).thenReturn(queryVecLiteral);
+        when(gitCommitInspectorService.findRelevantDiff(anyString(), anyString())).thenReturn("diff --git a/Order.java");
+
+        when(jdbcTemplate.queryForList(anyString(), eq(tenantId)))
+                .thenReturn(Collections.emptyList());
+
+        VectorRetrieverService.RunbookMatch topMatch = new VectorRetrieverService.RunbookMatch(
+                "Order Checkout Timeout Runbook",
+                "Increase timeout and restart worker",
+                "docs/timeout.md",
+                "+ timeout = 30s",
+                0.10,
+                0.90);
+        VectorRetrieverService.RunbookMatch secondMatch = new VectorRetrieverService.RunbookMatch(
+                "Secondary Runbook",
+                "Secondary text",
+                "docs/sec.md",
+                null,
+                0.22,
+                0.78);
+
+        when(jdbcTemplate.query(
+                org.mockito.ArgumentMatchers.argThat(sql -> sql != null && sql.contains("runbook_chunks")),
+                any(RowMapper.class),
+                eq(queryVecLiteral),
+                eq(queryVecLiteral),
+                eq(tenantId),
+                eq(queryVecLiteral),
+                eq(0.72),
+                eq(queryVecLiteral)))
+                .thenReturn(List.of(topMatch, secondMatch));
+
+        when(jdbcTemplate.query(
+                org.mockito.ArgumentMatchers.argThat(sql -> sql != null && sql.contains("FROM incidents")),
+                any(RowMapper.class),
+                eq(queryVecLiteral),
+                eq(queryVecLiteral),
+                eq(tenantId),
+                eq(queryVecLiteral),
+                eq(0.72),
+                eq(queryVecLiteral)))
+                .thenReturn(Collections.emptyList());
+
+        RetrievalResult result = retrieverService.retrieve(incident);
+
+        assertEquals(2, result.runbookMatches().size());
+        assertTrue(result.topRunbookMatch().isPresent());
+        assertEquals("Order Checkout Timeout Runbook", result.topRunbookMatch().get().runbookName());
+        assertEquals("Order Checkout Timeout Runbook", result.topRunbookName().orElse(null));
+        assertTrue(result.hasQualifyingMatch());
+        assertTrue(result.context().contains("Order Checkout Timeout Runbook"));
+        assertEquals(result.context(), retrieverService.retrieveContext(incident));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void retrieve_returnsStructuredResultWithoutMatchesWhenBelowThreshold() {
+        Incident incident = new Incident();
+        incident.setTenantId(tenantId);
+        incident.setServiceName("order-service");
+        incident.setSanitizedStackTrace("java.lang.RuntimeException: unknown error");
+
+        List<Double> queryVec = Collections.nCopies(768, 0.01);
+        String queryVecLiteral = "[0.01,0.01]";
+        when(embeddingService.embed(anyString())).thenReturn(queryVec);
+        when(embeddingService.toVectorLiteral(queryVec)).thenReturn(queryVecLiteral);
+        when(gitCommitInspectorService.findRelevantDiff(anyString(), anyString())).thenReturn("");
+
+        when(jdbcTemplate.queryForList(anyString(), eq(tenantId)))
+                .thenReturn(Collections.emptyList());
+
+        when(jdbcTemplate.query(anyString(), any(RowMapper.class), any(), any(), any(), any(), any(), any()))
+                .thenReturn(Collections.emptyList());
+
+        RetrievalResult result = retrieverService.retrieve(incident);
+
+        assertTrue(result.runbookMatches().isEmpty());
+        assertTrue(result.topRunbookMatch().isEmpty());
+        assertTrue(result.topRunbookName().isEmpty());
+        assertFalse(result.hasQualifyingMatch());
+        assertEquals(result.context(), retrieverService.retrieveContext(incident));
+    }
+
+    @Test
     void indexResolvedIncident_generatesEmbeddingAndUpsertsWithHumanVerifiedIncidentSource() {
         UUID incidentId = UUID.randomUUID();
         String runbookName = "Resolved incident order-service " + incidentId;

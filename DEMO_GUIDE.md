@@ -15,7 +15,7 @@ The system provides multi-tenant incident triage and automated Root-Cause Analys
    - Apache Kafka topic (`raw-error-logs`) buffer.
    - Deterministic regex sanitizer and SHA-256 fingerprint deduplication with Redis 7.
    - Retrieval-Augmented Generation (RAG) using PostgreSQL 16 + `pgvector` (768-dimensional cosine similarity), with vectors generated through the official Google GenAI Java SDK and used to match historical incidents, Git commits, and operational runbooks.
-   - OpenAI Chat Completions root-cause analysis with a deterministic fallback when no chat API key is configured or a chat request fails. Gemini is used separately for vector embeddings; `GEMINI_API_KEY` is required to embed first-occurrence logs.
+   - Hosted Gemma 4 root-cause analysis via the official Google GenAI Java SDK (`client.models.generateContent`), reusing the same `GEMINI_API_KEY` with configurable model ID (default `gemma-4-26b-a4b-it`, also supporting `gemma-4-31b-it`), and a deterministic fallback when no API key is configured or a generation request fails.
    - STOMP over SockJS WebSocket broker with tenant-scoped destination authorization (`/ws`).
    - PostgreSQL Row-Level Security (RLS) with dedicated unprivileged `airca_app` role (`NOBYPASSRLS`).
 4. **Dark-mode Vite/React Observability Dashboard**:
@@ -66,15 +66,14 @@ The system provides multi-tenant incident triage and automated Root-Cause Analys
 From the repository root, start all infrastructure and application containers in the background:
 
 ```bash
-# Required for first-occurrence log vectorization:
+# Powers both first-occurrence log vectorization and hosted Gemma 4 RCA generation:
 export GEMINI_API_KEY="<Google AI Studio API key>"
-# Optional: enables live OpenAI chat-based RCA; without it Airca uses deterministic RCA.
-export AI_API_KEY="<OpenAI API key>"
 docker compose up --build -d
 ```
 
 *(If images are already built, you can omit `--build`: `docker compose up -d`)*
-The Compose file also accepts `OPENAI_API_KEY` as an alternative to `AI_API_KEY`. These values are passed to the Airca container only; do not commit real keys to the repository. Without `GEMINI_API_KEY`, first-occurrence log ingestion fails during embedding generation, so a tenant's HTTP 500 response does not guarantee that an incident will appear in the dashboard.
+All tenant microservices (`order-service`, `ledger-service`, `auth-service`, `wallet-service`) and central `airca-service` build directly via multi-stage Docker builds from the Maven reactor; no manual pre-building of `target/*.jar` on the host machine is required.
+The service uses `GEMINI_API_KEY` for both vector embeddings (via `gemini-embedding-2`) and hosted Gemma 4 RCA generation (defaulting to `gemma-4-26b-a4b-it`, configurable via `AIRCA_AI_CHAT_MODEL`). Do not commit real keys to the repository. Without `GEMINI_API_KEY`, first-occurrence log ingestion fails during embedding generation, while RCA falls back to high-fidelity deterministic local analysis.
 
 ### Step 2: Verify Readiness & Container Health
 
@@ -216,7 +215,7 @@ When an intentional defect endpoint is called:
 >   2. The log message is published to Kafka topic `raw-error-logs`.
 >   3. The Kafka consumer processes the log, normalizes dynamic values (UUIDs, timestamps, hex pointers), and checks Redis for deduplication.
 >   4. If it is the **first occurrence**, Airca requires `GEMINI_API_KEY` to generate an embedding, then queries `pgvector` for similar runbooks and Git diffs, runs RCA, persists the incident with PostgreSQL RLS, and emits a STOMP broadcast. Without the Gemini key, embedding generation throws and the incident is not fully processed; configure the key before generating demo logs, and check Airca logs if a trigger does not appear on the dashboard.
->   5. RCA uses OpenAI Chat Completions when `AI_API_KEY` (or `OPENAI_API_KEY`) is configured. Without a chat key, it uses deterministic local analysis; this fallback does not replace the required Gemini embedding step.
+>   5. RCA uses hosted Gemma 4 generation (`gemma-4-26b-a4b-it` or `gemma-4-31b-it`) via the official Google GenAI SDK using `GEMINI_API_KEY`. If the key is missing or model generation fails, it uses deterministic local analysis.
 >   6. If it is a **subsequent occurrence**, Redis increments the occurrence counter in PostgreSQL without invoking the chat model, saving over 99% in token costs.
 >   7. The frontend receives the event via STOMP WebSocket and updates the UI live.
 > - **Caveat:** There is a brief propagation window (typically 100–500ms) between the microservice returning HTTP 500 and the incident appearing or updating on the frontend AG-Grid.
@@ -339,7 +338,7 @@ curl -i -X POST http://localhost:8080/api/v1/simulate-outage \
 
 1. In the frontend dashboard, click on any incident row in the AG-Grid table.
 2. The **RCA Inspector Drawer** slides out from the right:
-   - **Section 01 (Root Cause Analysis):** Displays the root cause diagnosis and a confidence score progress bar. RCA uses the configured OpenAI chat model or deterministic fallback, with retrieved evidence from pgvector.
+   - **Section 01 (Root Cause Analysis):** Displays the root cause diagnosis and a confidence score progress bar. RCA uses the configured Gemma 4 model or deterministic fallback, with retrieved evidence from pgvector.
    - **Section 02 (Suspected Introducing Commit):** Highlights the suspect Git commit SHA, author, and interactive syntax-highlighted diff (rendered by `DiffViewer.tsx`).
    - **Section 03 (Matched Operational Runbook):** Shows the pgvector-retrieved runbook playbook chunk.
    - **Section 04 (Suggested Remediation):** Provides the actionable remediation command with a single-click copy button (e.g. `kubectl rollout undo deployment/...`).
@@ -525,12 +524,12 @@ If any service fails to bind its port during `docker compose up`:
 - If running frontend on a custom host or port, ensure `CORS_ALLOWED_ORIGINS` in `airca-service` allows your frontend origin.
 
 ### 3. AI keys: embeddings and RCA
-- `GEMINI_API_KEY` is required for vector embedding generation. Without it, first-occurrence log ingestion fails during embedding and will not produce a fully processed incident.
-- `AI_API_KEY` (or `OPENAI_API_KEY`) enables live RCA through OpenAI Chat Completions (`gpt-4o-mini`). If neither is configured, [`AiRcaService.java`](file:///home/karan/projects/ai-assisted-logs-rca/airca-service/src/main/java/com/airca/ai/AiRcaService.java) uses deterministic local analysis; this fallback applies to RCA only, not embeddings.
-- Export the keys before starting/restarting Compose:
+- A single `GEMINI_API_KEY` powers both vector embeddings (via `gemini-embedding-2`) and hosted Gemma 4 root-cause analysis (via `gemma-4-26b-a4b-it` or `gemma-4-31b-it`) using the official Google GenAI Java SDK.
+- `GEMINI_API_KEY` is required for vector embedding generation of first-occurrence logs.
+- For root-cause analysis, if `GEMINI_API_KEY` is not configured or the model call fails, [`AiRcaService.java`](file:///home/karan/projects/ai-assisted-logs-rca/airca-service/src/main/java/com/airca/ai/AiRcaService.java) automatically falls back to high-fidelity deterministic local analysis.
+- Export the key before starting/restarting Compose:
   ```bash
   export GEMINI_API_KEY="<Google AI Studio API key>"
-  export AI_API_KEY="<OpenAI API key>" # optional
   docker compose up -d
   ```
 
