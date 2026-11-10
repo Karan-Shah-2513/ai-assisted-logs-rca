@@ -2,49 +2,82 @@ package com.airca.ai;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
-import static org.springframework.test.web.client.response.MockRestResponseCreators.withBadRequest;
-import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
-import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.MediaType;
-import org.springframework.test.web.client.MockRestServiceServer;
-import org.springframework.web.client.RestClient;
 
 class TextEmbeddingServiceTest {
 
     private static final String API_KEY = "test-gemini-key";
     private static final String MODEL = "gemini-embedding-2";
     private static final int DIMENSIONS = 768;
-    private static final String EXPECTED_URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2:embedContent";
+    private static final String EXPECTED_PATH =
+            "/v1beta/models/gemini-embedding-2:batchEmbedContents";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private RestClient.Builder restClientBuilder;
-    private MockRestServiceServer mockServer;
+    private final List<TextEmbeddingService> services = new ArrayList<>();
+    private final AtomicReference<CapturedRequest> capturedRequest = new AtomicReference<>();
+    private HttpServer server;
+    private String baseUrl;
+    private int responseStatus;
+    private String responseBody;
 
     @BeforeEach
-    void setUp() {
-        restClientBuilder = RestClient.builder();
-        mockServer = MockRestServiceServer.bindTo(restClientBuilder).build();
+    void setUp() throws IOException {
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/", this::handleRequest);
+        server.start();
+        baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        responseStatus = 200;
+        responseBody = "{}";
+    }
+
+    @AfterEach
+    void tearDown() {
+        for (TextEmbeddingService service : services) {
+            service.close();
+        }
+        server.stop(0);
+    }
+
+    private void handleRequest(HttpExchange exchange) throws IOException {
+        String requestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+        capturedRequest.set(new CapturedRequest(
+                exchange.getRequestMethod(),
+                exchange.getRequestURI().getPath(),
+                exchange.getRequestHeaders().getFirst("x-goog-api-key"),
+                requestBody));
+        byte[] response = responseBody.getBytes(StandardCharsets.UTF_8);
+        exchange.sendResponseHeaders(responseStatus, response.length);
+        try (OutputStream output = exchange.getResponseBody()) {
+            output.write(response);
+        }
+    }
+
+    private TextEmbeddingService newService(int dimensions) {
+        TextEmbeddingService service = new TextEmbeddingService(API_KEY, MODEL, dimensions, baseUrl);
+        services.add(service);
+        return service;
     }
 
     private String createEmbeddingJsonResponse(int count) throws Exception {
-        ObjectNode root = objectMapper.createObjectNode();
-        ArrayNode values = root.putObject("embedding").putArray("values");
+        var root = objectMapper.createObjectNode();
+        var values = root.putArray("embeddings").addObject().putArray("values");
         for (int i = 0; i < count; i++) {
             values.add(i * 0.001);
         }
@@ -52,20 +85,10 @@ class TextEmbeddingServiceTest {
     }
 
     @Test
-    void embed_verifiesUrlHeaderModelOutputDimensionalityAndReturns768Vector() throws Exception {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
-
+    void embed_usesOfficialSdkWithConfiguredModelApiKeyAnd768Dimensions() throws Exception {
+        TextEmbeddingService service = newService(DIMENSIONS);
         String sampleText = "Deadlock encountered in payment service transaction";
-        String responseJson = createEmbeddingJsonResponse(DIMENSIONS);
-
-        mockServer.expect(requestTo(EXPECTED_URL))
-                .andExpect(method(HttpMethod.POST))
-                .andExpect(header("x-goog-api-key", API_KEY))
-                .andExpect(jsonPath("$.model").value(MODEL))
-                .andExpect(jsonPath("$.outputDimensionality").value(DIMENSIONS))
-                .andExpect(jsonPath("$.content.parts[0].text").value(sampleText))
-                .andRespond(withSuccess(responseJson, MediaType.APPLICATION_JSON));
+        responseBody = createEmbeddingJsonResponse(DIMENSIONS);
 
         List<Double> vector = service.embed(sampleText);
 
@@ -75,171 +98,114 @@ class TextEmbeddingServiceTest {
         assertEquals(0.001, vector.get(1), 1e-6);
         assertEquals((DIMENSIONS - 1) * 0.001, vector.get(DIMENSIONS - 1), 1e-6);
 
-        mockServer.verify();
+        CapturedRequest request = capturedRequest.get();
+        assertNotNull(request);
+        assertEquals("POST", request.method());
+        assertEquals(EXPECTED_PATH, request.path());
+        assertEquals(API_KEY, request.apiKey());
+        JsonNode body = objectMapper.readTree(request.body());
+        JsonNode embedRequest = body.path("requests").get(0);
+        assertEquals("models/" + MODEL, embedRequest.path("model").asText());
+        assertEquals(DIMENSIONS, embedRequest.path("outputDimensionality").asInt());
+        assertEquals(sampleText, embedRequest.path("content").path("parts").get(0).path("text").asText());
     }
 
     @Test
     void embed_failsImmediatelyWhenApiKeyIsMissing_withoutNetworkCalls() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, "", MODEL, DIMENSIONS);
+        TextEmbeddingService service = new TextEmbeddingService("", MODEL, DIMENSIONS, baseUrl);
+        services.add(service);
 
         IllegalStateException exception =
                 assertThrows(IllegalStateException.class, () -> service.embed("some text"));
         assertTrue(exception.getMessage().contains("GEMINI_API_KEY"));
-
-        mockServer.verify();
+        assertNull(capturedRequest.get());
     }
 
     @Test
     void embed_failsImmediatelyWhenApiKeyIsNull_withoutNetworkCalls() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, null, MODEL, DIMENSIONS);
+        TextEmbeddingService service = new TextEmbeddingService(null, MODEL, DIMENSIONS, baseUrl);
+        services.add(service);
 
         IllegalStateException exception =
                 assertThrows(IllegalStateException.class, () -> service.embed("some text"));
         assertTrue(exception.getMessage().contains("GEMINI_API_KEY"));
-
-        mockServer.verify();
+        assertNull(capturedRequest.get());
     }
 
     @Test
-    void embed_failsWhenApiReturnsHttpServerError() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
-
-        mockServer.expect(requestTo(EXPECTED_URL))
-                .andExpect(method(HttpMethod.POST))
-                .andRespond(withServerError());
+    void embed_reportsApiErrors() {
+        TextEmbeddingService service = newService(DIMENSIONS);
+        responseStatus = 400;
+        responseBody = "{\"error\":{\"message\":\"invalid request\"}}";
 
         IllegalStateException exception =
                 assertThrows(IllegalStateException.class, () -> service.embed("some text"));
-        assertTrue(exception.getMessage().contains("Gemini embedding API error")
-                || exception.getMessage().contains("failed"));
-
-        mockServer.verify();
+        assertTrue(exception.getMessage().contains("Gemini embedding API request failed"));
+        assertNotNull(capturedRequest.get());
     }
 
     @Test
-    void embed_failsWhenApiReturnsHttpBadRequest() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
-
-        mockServer.expect(requestTo(EXPECTED_URL))
-                .andExpect(method(HttpMethod.POST))
-                .andRespond(withBadRequest());
-
-        IllegalStateException exception =
-                assertThrows(IllegalStateException.class, () -> service.embed("some text"));
-        assertTrue(exception.getMessage().contains("Gemini embedding API error")
-                || exception.getMessage().contains("failed"));
-
-        mockServer.verify();
-    }
-
-    @Test
-    void embed_failsWhenResponseIsMalformed_missingEmbedding() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
-
-        mockServer.expect(requestTo(EXPECTED_URL))
-                .andExpect(method(HttpMethod.POST))
-                .andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+    void embed_failsWhenResponseIsMalformed_missingEmbeddings() {
+        TextEmbeddingService service = newService(DIMENSIONS);
+        responseBody = "{}";
 
         IllegalStateException exception =
                 assertThrows(IllegalStateException.class, () -> service.embed("some text"));
         assertTrue(exception.getMessage().contains("malformed response"));
-
-        mockServer.verify();
     }
 
     @Test
-    void embed_failsWhenResponseIsMalformed_missingValuesArray() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
-
-        mockServer.expect(requestTo(EXPECTED_URL))
-                .andExpect(method(HttpMethod.POST))
-                .andRespond(withSuccess("{\"embedding\": {}}", MediaType.APPLICATION_JSON));
+    void embed_failsWhenResponseIsMalformed_missingValues() {
+        TextEmbeddingService service = newService(DIMENSIONS);
+        responseBody = "{\"embeddings\":[{}]}";
 
         IllegalStateException exception =
                 assertThrows(IllegalStateException.class, () -> service.embed("some text"));
         assertTrue(exception.getMessage().contains("malformed response"));
-
-        mockServer.verify();
     }
 
     @Test
     void embed_failsWhenVectorHasWrongDimensions() throws Exception {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
-
-        // API returns 1536 dimensions instead of expected 768
-        String wrongDimensionResponse = createEmbeddingJsonResponse(1536);
-
-        mockServer.expect(requestTo(EXPECTED_URL))
-                .andExpect(method(HttpMethod.POST))
-                .andRespond(withSuccess(wrongDimensionResponse, MediaType.APPLICATION_JSON));
+        TextEmbeddingService service = newService(DIMENSIONS);
+        responseBody = createEmbeddingJsonResponse(1536);
 
         IllegalStateException exception =
                 assertThrows(IllegalStateException.class, () -> service.embed("some text"));
         assertTrue(exception.getMessage().contains("768") && exception.getMessage().contains("1536"));
-
-        mockServer.verify();
     }
 
     @Test
-    void embed_failsWhenVectorContainsNonFiniteNumber() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
-
-        // Build 768 values with one NaN string or null
-        StringBuilder jsonBuilder = new StringBuilder("{\"embedding\":{\"values\":[");
-        for (int i = 0; i < 768; i++) {
-            if (i > 0) {
-                jsonBuilder.append(',');
-            }
-            if (i == 42) {
-                jsonBuilder.append("\"not-a-number\"");
-            } else {
-                jsonBuilder.append("0.1");
-            }
+    void embed_failsWhenVectorContainsInvalidValue() throws Exception {
+        TextEmbeddingService service = newService(DIMENSIONS);
+        var root = objectMapper.createObjectNode();
+        var values = root.putArray("embeddings").addObject().putArray("values");
+        for (int i = 0; i < DIMENSIONS; i++) {
+            values.add(i == 42 ? "not-a-number" : "0.1");
         }
-        jsonBuilder.append("]}}");
+        responseBody = objectMapper.writeValueAsString(root);
 
-        mockServer.expect(requestTo(EXPECTED_URL))
-                .andExpect(method(HttpMethod.POST))
-                .andRespond(withSuccess(jsonBuilder.toString(), MediaType.APPLICATION_JSON));
-
-        IllegalStateException exception =
-                assertThrows(IllegalStateException.class, () -> service.embed("some text"));
-        assertTrue(exception.getMessage().contains("non-numeric"));
-
-        mockServer.verify();
+        assertThrows(IllegalStateException.class, () -> service.embed("some text"));
     }
 
     @Test
-    void embed_respectsConfigurableDimensions() throws Exception {
+    void embed_respectsConfigurableDimensionsAndInputLimit() throws Exception {
         int customDimensions = 512;
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, customDimensions);
+        TextEmbeddingService service = newService(customDimensions);
+        responseBody = createEmbeddingJsonResponse(customDimensions);
+        String input = "x".repeat(24_001);
 
-        String customResponse = createEmbeddingJsonResponse(customDimensions);
+        List<Double> vector = service.embed(input);
 
-        mockServer.expect(requestTo(EXPECTED_URL))
-                .andExpect(method(HttpMethod.POST))
-                .andExpect(jsonPath("$.outputDimensionality").value(customDimensions))
-                .andRespond(withSuccess(customResponse, MediaType.APPLICATION_JSON));
-
-        List<Double> vector = service.embed("some text");
         assertEquals(customDimensions, vector.size());
-
-        mockServer.verify();
+        JsonNode body = objectMapper.readTree(capturedRequest.get().body());
+        JsonNode embedRequest = body.path("requests").get(0);
+        assertEquals(customDimensions, embedRequest.path("outputDimensionality").asInt());
+        assertEquals(24_000, embedRequest.path("content").path("parts").get(0).path("text").asText().length());
     }
 
     @Test
     void toVectorLiteral_serializesValid768Vector() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
+        TextEmbeddingService service = newService(DIMENSIONS);
 
         List<Double> vector = new ArrayList<>(DIMENSIONS);
         for (int i = 0; i < DIMENSIONS; i++) {
@@ -254,8 +220,7 @@ class TextEmbeddingServiceTest {
 
     @Test
     void toVectorLiteral_rejectsInvalidDimensions() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
+        TextEmbeddingService service = newService(DIMENSIONS);
 
         List<Double> shortVector = new ArrayList<>();
         for (int i = 0; i < 767; i++) {
@@ -274,8 +239,7 @@ class TextEmbeddingServiceTest {
 
     @Test
     void toVectorLiteral_rejectsNonFiniteNumbers() {
-        TextEmbeddingService service =
-                new TextEmbeddingService(restClientBuilder, API_KEY, MODEL, DIMENSIONS);
+        TextEmbeddingService service = newService(DIMENSIONS);
 
         List<Double> nanVector = new ArrayList<>(DIMENSIONS);
         for (int i = 0; i < DIMENSIONS; i++) {
@@ -291,5 +255,6 @@ class TextEmbeddingServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> service.toVectorLiteral(infiniteVector));
     }
-}
 
+    private record CapturedRequest(String method, String path, String apiKey, String body) {}
+}

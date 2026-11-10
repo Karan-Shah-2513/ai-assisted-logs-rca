@@ -71,6 +71,7 @@ services:
       REDIS_PORT: 6379
       KAFKA_BOOTSTRAP_SERVERS: kafka:29092
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_API_KEY: ${AI_API_KEY:-${OPENAI_API_KEY:-}}
       AIRCA_REPOSITORY_ROOT: /workspace/repository
       REDIS_DEDUP_TTL_MINUTES: 60
       AIRCA_TENANT_API_KEY_ALPHAFIN: "alphafin-secret-key-1111"

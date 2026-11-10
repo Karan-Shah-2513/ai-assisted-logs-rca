@@ -16,8 +16,9 @@
 - [x] Task 16: Enforce tenant authorization on WebSocket CONNECT and SUBSCRIBE | Complexity: Medium
 - [x] Task 17: Enforce PostgreSQL RLS with a dedicated NOBYPASSRLS application role | Complexity: Medium
 - [x] Task 18: Add Testcontainers integration-test infrastructure and test configuration | Complexity: Medium
-- [ ] Task 19: Verify RLS isolation, Redis TTL/deduplication, and WebSocket tenant authorization | Complexity: Medium
-- [ ] Task 20: Verify embedding dimensionality, semantic retrieval, and verified feedback loop | Complexity: Medium
-- [ ] Task 21: Replace complex frontend widgets with a minimal tenant-aware incident dashboard | Complexity: Medium
-- [ ] Task 22: Add tenant bug trigger/burst controls, RCA inspection, and verified resolution UI | Complexity: Medium
-- [ ] Task 23: Document exact demo commands, endpoints, broken-code locations, and end-to-end startup | Complexity: Low
+- [x] Task 19: Verify RLS isolation, Redis TTL/deduplication, and WebSocket tenant authorization | Complexity: Medium
+- [x] Task 20: Verify embedding dimensionality, semantic retrieval, and verified feedback loop | Complexity: Medium
+- [x] Task 21: Replace complex frontend widgets with a minimal tenant-aware incident dashboard | Complexity: Medium
+- [x] Task 22: Add tenant bug trigger/burst controls, RCA inspection, and verified resolution UI | Complexity: Medium
+- [x] Task 23: Document exact demo commands, endpoints, broken-code locations, and end-to-end startup | Complexity: Low
+- [x] Task 24: Replace direct Gemini embedding calls with the official google-genai Java SDK after reviewing current AI Studio docs; preserve 768-dimension validation, matching retrieval/query behavior, and focused tests with minimal scope | Complexity: Medium

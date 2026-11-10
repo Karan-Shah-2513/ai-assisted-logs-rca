@@ -1,16 +1,16 @@
 package com.airca.ai;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import com.google.genai.Client;
+import com.google.genai.types.ContentEmbedding;
+import com.google.genai.types.EmbedContentConfig;
+import com.google.genai.types.EmbedContentResponse;
+import com.google.genai.types.HttpOptions;
+import jakarta.annotation.PreDestroy;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
-import org.springframework.web.client.RestClientException;
-import org.springframework.web.client.RestClientResponseException;
 
 @Service
 public class TextEmbeddingService {
@@ -18,100 +18,90 @@ public class TextEmbeddingService {
     public static final int DEFAULT_DIMENSIONS = 768;
     public static final int DIMENSIONS = 768;
     private static final int MAX_INPUT_CHARS = 24_000;
+    private static final String DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com";
 
-    private final RestClient restClient;
-    private final String apiKey;
+    private final Client client;
     private final String model;
     private final int dimensions;
 
     @Autowired
     public TextEmbeddingService(
-            RestClient.Builder restClientBuilder,
             @Value("${GEMINI_API_KEY:}") String apiKey,
             @Value("${app.ai.embedding.model:gemini-embedding-2}") String model,
             @Value("${app.ai.embedding.dimensions:768}") int dimensions) {
-        this(restClientBuilder, apiKey, model, dimensions, "https://generativelanguage.googleapis.com");
+        this(apiKey, model, dimensions, DEFAULT_BASE_URL);
     }
 
     public TextEmbeddingService(
-            RestClient.Builder restClientBuilder,
             String apiKey,
             String model,
             int dimensions,
             String baseUrl) {
-        this.apiKey = apiKey != null ? apiKey.trim() : null;
+        String normalizedApiKey = apiKey != null ? apiKey.trim() : null;
         this.model = model != null && !model.isBlank() ? model.trim() : "gemini-embedding-2";
         this.dimensions = dimensions > 0 ? dimensions : DEFAULT_DIMENSIONS;
-        String base = baseUrl != null && !baseUrl.isBlank() ? baseUrl.trim() : "https://generativelanguage.googleapis.com";
-        this.restClient = restClientBuilder.baseUrl(base).build();
+        String base = baseUrl != null && !baseUrl.isBlank() ? baseUrl.trim() : DEFAULT_BASE_URL;
+        this.client = normalizedApiKey == null || normalizedApiKey.isBlank()
+                ? null
+                : Client.builder()
+                        .apiKey(normalizedApiKey)
+                        .httpOptions(HttpOptions.builder()
+                                .baseUrl(base)
+                                .apiVersion("v1beta")
+                                .build())
+                        .build();
     }
 
     public List<Double> embed(String text) {
-        if (this.apiKey == null || this.apiKey.isBlank()) {
+        if (this.client == null) {
             throw new IllegalStateException("GEMINI_API_KEY must be configured for embedding generation");
         }
 
         String input = text == null ? "" : text.substring(0, Math.min(text.length(), MAX_INPUT_CHARS));
 
-        String modelPath = this.model.startsWith("models/") ? this.model : "models/" + this.model;
-        String uri = "/v1beta/" + modelPath + ":embedContent";
-
-        Map<String, Object> requestBody = Map.of(
-                "model", this.model,
-                "content", Map.of(
-                        "parts", List.of(
-                                Map.of("text", input))),
-                "outputDimensionality", this.dimensions);
-
-        JsonNode response;
+        EmbedContentResponse response;
         try {
-            response = restClient.post()
-                    .uri(uri)
-                    .header("x-goog-api-key", this.apiKey)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .accept(MediaType.APPLICATION_JSON)
-                    .body(requestBody)
-                    .retrieve()
-                    .body(JsonNode.class);
-        } catch (RestClientResponseException exception) {
+            EmbedContentConfig config =
+                    EmbedContentConfig.builder().outputDimensionality(this.dimensions).build();
+            response = this.client.models.embedContent(this.model, input, config);
+        } catch (RuntimeException exception) {
             throw new IllegalStateException(
-                    "Gemini embedding API error: HTTP " + exception.getStatusCode() + " - " + exception.getResponseBodyAsString(),
-                    exception);
-        } catch (RestClientException exception) {
-            throw new IllegalStateException(
-                    "Gemini embedding API call failed: " + exception.getMessage(),
+                    "Gemini embedding API request failed: " + exception.getMessage(),
                     exception);
         }
 
-        if (response == null || !response.hasNonNull("embedding")) {
-            throw new IllegalStateException("Gemini embedding API returned malformed response: missing 'embedding'");
+        if (response == null || response.embeddings().isEmpty()) {
+            throw new IllegalStateException("Gemini embedding API returned malformed response: missing embeddings");
         }
-        JsonNode valuesNode = response.path("embedding").path("values");
-        if (valuesNode == null || !valuesNode.isArray()) {
-            throw new IllegalStateException("Gemini embedding API returned malformed response: missing 'embedding.values' array");
+        List<ContentEmbedding> embeddings = response.embeddings().get();
+        if (embeddings.size() != 1 || embeddings.get(0).values().isEmpty()) {
+            throw new IllegalStateException("Gemini embedding API returned malformed response: missing embedding values");
         }
-        if (valuesNode.size() != this.dimensions) {
+        List<Float> values = embeddings.get(0).values().get();
+        if (values.size() != this.dimensions) {
             throw new IllegalStateException(String.format(
                     "Expected %d-dimensional embedding vector, but received %d",
                     this.dimensions,
-                    valuesNode.size()));
+                    values.size()));
         }
 
-        List<Double> result = new ArrayList<>(this.dimensions);
-        for (int i = 0; i < valuesNode.size(); i++) {
-            JsonNode element = valuesNode.get(i);
-            if (element == null || !element.isNumber()) {
+        List<Double> result = new ArrayList<>(values.size());
+        for (int i = 0; i < values.size(); i++) {
+            Float element = values.get(i);
+            if (element == null || !Float.isFinite(element)) {
                 throw new IllegalStateException(
-                        "Embedding vector contains non-numeric element at index " + i + ": " + element);
+                        "Embedding vector contains non-finite element at index " + i + ": " + element);
             }
-            double val = element.doubleValue();
-            if (!Double.isFinite(val)) {
-                throw new IllegalStateException(
-                        "Embedding vector contains non-finite number at index " + i + ": " + val);
-            }
-            result.add(val);
+            result.add(element.doubleValue());
         }
         return result;
+    }
+
+    @PreDestroy
+    public void close() {
+        if (this.client != null) {
+            this.client.close();
+        }
     }
 
     public String toVectorLiteral(List<Double> vector) {

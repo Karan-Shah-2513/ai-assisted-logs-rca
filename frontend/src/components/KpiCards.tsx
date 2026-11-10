@@ -2,48 +2,53 @@ import { Activity, CircleDollarSign, Layers3, Workflow } from 'lucide-react'
 import type { Telemetry } from '../types'
 
 interface KpiCardsProps {
-  telemetry: Telemetry
+  telemetry: Telemetry | null
+  loading?: boolean
 }
 
 const number = new Intl.NumberFormat('en-US')
 
-export function KpiCards({ telemetry }: KpiCardsProps) {
+export function KpiCards({ telemetry, loading }: KpiCardsProps) {
   const cards = [
     {
       label: 'Total logs processed',
-      value: number.format(telemetry.totalLogs),
+      value: telemetry ? number.format(telemetry.totalLogs) : loading ? '…' : '0',
       icon: Activity,
-      note: 'Across active services',
+      note: 'Across active tenant services',
       tone: 'lime',
     },
     {
       label: 'Deduplicated ratio',
-      value: `${telemetry.deduplicationRatio.toFixed(1)}%`,
+      value: telemetry ? `${telemetry.deduplicationRatio.toFixed(1)}%` : loading ? '…' : '0.0%',
       icon: Layers3,
-      note: `${number.format(telemetry.deduplicatedLogs)} noise events filtered`,
+      note: telemetry
+        ? `${number.format(telemetry.deduplicatedLogs)} noise events filtered`
+        : 'Noise reduction active',
       tone: 'blue',
     },
     {
       label: 'Unique incidents',
-      value: number.format(telemetry.uniqueIncidents),
+      value: telemetry ? number.format(telemetry.uniqueIncidents) : loading ? '…' : '0',
       icon: Workflow,
-      note: 'Grouped by fingerprint',
+      note: 'Grouped by fingerprint hash',
       tone: 'violet',
     },
     {
       label: 'Estimated LLM cost saved',
-      value: `$${telemetry.estimatedCostSavedUsd.toFixed(2)}`,
+      value: telemetry ? `$${telemetry.estimatedCostSavedUsd.toFixed(2)}` : loading ? '…' : '$0.00',
       icon: CircleDollarSign,
-      note: 'By deduplicating repeated logs',
+      note: 'Through log deduplication',
       tone: 'amber',
     },
   ]
 
   return (
-    <section className="kpi-grid" aria-label="Telemetry overview">
+    <section className="kpi-grid" aria-label="Tenant telemetry overview">
       {cards.map(({ label, value, icon: Icon, note, tone }) => (
-        <article className="kpi-card" key={label}>
-          <div className={`kpi-icon ${tone}`}><Icon size={16} strokeWidth={1.8} /></div>
+        <article className={`kpi-card ${loading ? 'is-loading' : ''}`} key={label}>
+          <div className={`kpi-icon ${tone}`} aria-hidden="true">
+            <Icon size={16} strokeWidth={1.8} />
+          </div>
           <div className="kpi-copy">
             <p className="kpi-label">{label}</p>
             <p className="kpi-value">{value}</p>
