@@ -15,7 +15,7 @@ The system provides multi-tenant incident triage and automated Root-Cause Analys
    - Apache Kafka topic (`raw-error-logs`) buffer.
    - Deterministic regex sanitizer and SHA-256 fingerprint deduplication with Redis 7.
    - Retrieval-Augmented Generation (RAG) using PostgreSQL 16 + `pgvector` (768-dimensional cosine similarity), with vectors generated through the official Google GenAI Java SDK and used to match historical incidents, Git commits, and operational runbooks.
-   - Hosted Gemma 4 root-cause analysis via the official Google GenAI Java SDK (`client.models.generateContent`), reusing the same `GEMINI_API_KEY` with configurable model ID (default `gemma-4-26b-a4b-it`, also supporting `gemma-4-31b-it`), and a deterministic fallback when no API key is configured or a generation request fails.
+   - Hosted Gemma 4 root-cause analysis via the official Google GenAI Java SDK (`client.models.generateContent`), reusing the same `GEMINI_API_KEY` with configurable model ID (default `gemma-4-26b-a4b-it`, also supporting `gemma-4-31b-it`), authoritative RAG runbook match preservation (guaranteeing that top qualifying vector runbook matches are preserved directly in reports, independent of model output), and a deterministic fallback when no API key is configured or a generation request fails.
    - STOMP over SockJS WebSocket broker with tenant-scoped destination authorization (`/ws`).
    - PostgreSQL Row-Level Security (RLS) with dedicated unprivileged `airca_app` role (`NOBYPASSRLS`).
 4. **Dark-mode Vite/React Observability Dashboard**:
@@ -68,6 +68,10 @@ From the repository root, start all infrastructure and application containers in
 ```bash
 # Powers both first-occurrence log vectorization and hosted Gemma 4 RCA generation:
 export GEMINI_API_KEY="<Google AI Studio API key>"
+
+# Optional: override hosted Gemma 4 model (default: gemma-4-26b-a4b-it, supports gemma-4-31b-it)
+# export AIRCA_AI_CHAT_MODEL="gemma-4-26b-a4b-it"
+
 docker compose up --build -d
 ```
 
@@ -214,8 +218,8 @@ When an intentional defect endpoint is called:
 >   1. Airca acknowledges the incoming log with `HTTP 202 Accepted` (`status: "QUEUED"`).
 >   2. The log message is published to Kafka topic `raw-error-logs`.
 >   3. The Kafka consumer processes the log, normalizes dynamic values (UUIDs, timestamps, hex pointers), and checks Redis for deduplication.
->   4. If it is the **first occurrence**, Airca requires `GEMINI_API_KEY` to generate an embedding, then queries `pgvector` for similar runbooks and Git diffs, runs RCA, persists the incident with PostgreSQL RLS, and emits a STOMP broadcast. Without the Gemini key, embedding generation throws and the incident is not fully processed; configure the key before generating demo logs, and check Airca logs if a trigger does not appear on the dashboard.
->   5. RCA uses hosted Gemma 4 generation (`gemma-4-26b-a4b-it` or `gemma-4-31b-it`) via the official Google GenAI SDK using `GEMINI_API_KEY`. If the key is missing or model generation fails, it uses deterministic local analysis.
+>   4. If it is the **first occurrence**, Airca requires `GEMINI_API_KEY` to generate 768-dimensional embeddings via `gemini-embedding-2` through the official Google GenAI SDK, then queries `pgvector` for similar runbooks (cosine threshold 0.72) and inspects recent Git diffs. The top qualifying runbook match from vector retrieval is locked in as the authoritative runbook for the incident. Without the Gemini key, embedding generation throws and the incident is not fully processed; configure the key before generating demo logs, and check Airca logs if a trigger does not appear on the dashboard.
+>   5. RCA invokes hosted Gemma 4 generation (`gemma-4-26b-a4b-it` or `gemma-4-31b-it`) via the official Google GenAI SDK using `GEMINI_API_KEY` (temperature 0.1, structured JSON output mode). If the key is missing or model generation fails/times out, it automatically falls back to deterministic local analysis. The authoritative RAG runbook resolved in Step 4 is preserved on the final `AiRcaReport` and displayed in the UI, independent of model generation.
 >   6. If it is a **subsequent occurrence**, Redis increments the occurrence counter in PostgreSQL without invoking the chat model, saving over 99% in token costs.
 >   7. The frontend receives the event via STOMP WebSocket and updates the UI live.
 > - **Caveat:** There is a brief propagation window (typically 100–500ms) between the microservice returning HTTP 500 and the incident appearing or updating on the frontend AG-Grid.
@@ -340,7 +344,7 @@ curl -i -X POST http://localhost:8080/api/v1/simulate-outage \
 2. The **RCA Inspector Drawer** slides out from the right:
    - **Section 01 (Root Cause Analysis):** Displays the root cause diagnosis and a confidence score progress bar. RCA uses the configured Gemma 4 model or deterministic fallback, with retrieved evidence from pgvector.
    - **Section 02 (Suspected Introducing Commit):** Highlights the suspect Git commit SHA, author, and interactive syntax-highlighted diff (rendered by `DiffViewer.tsx`).
-   - **Section 03 (Matched Operational Runbook):** Shows the pgvector-retrieved runbook playbook chunk.
+   - **Section 03 (Matched Operational Runbook):** Shows the pgvector-retrieved runbook playbook chunk (authoritatively resolved from vector similarity search and preserved independent of LLM output).
    - **Section 04 (Suggested Remediation):** Provides the actionable remediation command with a single-click copy button (e.g. `kubectl rollout undo deployment/...`).
    - **Section 05 (Failure Signature):** Displays the sanitized exception stack trace.
 
@@ -523,14 +527,36 @@ If any service fails to bind its port during `docker compose up`:
 - Check browser developer console (F12) for STOMP connection logs.
 - If running frontend on a custom host or port, ensure `CORS_ALLOWED_ORIGINS` in `airca-service` allows your frontend origin.
 
-### 3. AI keys: embeddings and RCA
-- A single `GEMINI_API_KEY` powers both vector embeddings (via `gemini-embedding-2`) and hosted Gemma 4 root-cause analysis (via `gemma-4-26b-a4b-it` or `gemma-4-31b-it`) using the official Google GenAI Java SDK.
-- `GEMINI_API_KEY` is required for vector embedding generation of first-occurrence logs.
-- For root-cause analysis, if `GEMINI_API_KEY` is not configured or the model call fails, [`AiRcaService.java`](file:///home/karan/projects/ai-assisted-logs-rca/airca-service/src/main/java/com/airca/ai/AiRcaService.java) automatically falls back to high-fidelity deterministic local analysis.
-- Export the key before starting/restarting Compose:
+### 3. AI Configuration: Google GenAI SDK, Embeddings & Hosted Gemma 4 RCA
+- **Unified API Key:** A single `GEMINI_API_KEY` powers both vector embeddings (via `gemini-embedding-2`) and hosted Gemma 4 root-cause analysis (via `gemma-4-26b-a4b-it` or `gemma-4-31b-it`) using the official Google GenAI Java SDK (`com.google.genai:google-genai`). No separate OpenAI key is needed.
+- **Vector Embeddings (`TextEmbeddingService`):**
+  - Model: `gemini-embedding-2` (`app.ai.embedding.model`).
+  - Dimensions: `768` (`app.ai.embedding.dimensions: 768`).
+  - Strict validation: verifies that exactly 768 finite float values are returned before persisting to `pgvector` (`vector(768)`).
+  - Required for first-occurrence log ingestion: without `GEMINI_API_KEY`, embedding generation throws and the incident is not fully triaged.
+- **Hosted Gemma 4 RCA (`AiRcaService`):**
+  - Default Model: `gemma-4-26b-a4b-it` (`airca.ai.chat-model: ${AIRCA_AI_CHAT_MODEL:gemma-4-26b-a4b-it}`).
+  - Supported Alternative: `gemma-4-31b-it`.
+  - Configured with `temperature(0.1f)` and `responseMimeType("application/json")` for deterministic, structured JSON output.
+  - Robust Payload Parsing: `extractJsonPayload` handles potential markdown code fence wrapping (```json ... ```), and `normalizeEvidence` gracefully converts string variations like `"null"`, `"none"`, or `"n/a"` to standard platform fallbacks (`"No matching commit identified"`, `"No directly matching runbook found"`).
+- **Authoritative RAG Runbook Preservation (Task 27):**
+  - The top qualifying runbook chunk retrieved from PostgreSQL `pgvector` cosine similarity search (threshold: 0.72) is preserved as the authoritative runbook value in the final `AiRcaReport` (`report.withMatchedRunbook(authoritativeRunbook)`), independent of whether the LLM mentions or omits the runbook.
+- **Resilient Deterministic Local Analysis Fallback:**
+  - If `GEMINI_API_KEY` is not configured or if the Gemma 4 API call fails (network timeout, rate limit, quota exhaustion), `AiRcaService` automatically falls back to local deterministic rule-based analysis, guaranteeing 100% platform availability without throwing HTTP 500s.
+- **Environment Setup:**
   ```bash
+  # Required: powers both gemini-embedding-2 and hosted Gemma 4 RCA
   export GEMINI_API_KEY="<Google AI Studio API key>"
+
+  # Optional: override default Gemma 4 model (default: gemma-4-26b-a4b-it)
+  # export AIRCA_AI_CHAT_MODEL="gemma-4-31b-it"
+
   docker compose up -d
+  ```
+- **Run Unit & Integration Tests:**
+  ```bash
+  cd airca-service
+  mvn test -Dtest=AiRcaServiceTest,TextEmbeddingServiceTest,RetrievalResultTest,VectorRetrieverServiceTest
   ```
 
 ### 4. Database Liquibase Changelog Lock

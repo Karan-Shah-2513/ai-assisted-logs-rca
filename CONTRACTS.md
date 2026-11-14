@@ -17,7 +17,7 @@
 
 - **Sub-Agent 2 (`AI-RAG-Chaos-Engine`)**:
   - Packages:
-    - `com.airca.ai` (Spring AI / Gemini service, MockAiFallbackService, Prompt engineering, AiRcaReport generator)
+    - `com.airca.ai` (Google GenAI SDK, hosted Gemma 4 RCA, Gemini embedding service, deterministic fallback RCA, prompt engineering, AiRcaReport generator)
     - `com.airca.rag` (VectorRetrieverService, GitDiffService, PgVector similarity search)
     - `com.airca.websocket` (WebSocketConfig, StompBroadcasterService)
     - `com.airca.chaos` (ChaosSimulatorService, ChaosController)
