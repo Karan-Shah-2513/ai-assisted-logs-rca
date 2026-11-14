@@ -165,3 +165,11 @@ curl -X GET http://localhost:8080/api/v1/telemetry \
 - Backend Unit & Integration Tests: `cd airca-service && mvn clean test` (Comprehensive test suite covering PostgreSQL RLS isolation, Redis deduplication, WebSocket tenant authorization, Google GenAI SDK embedding and Gemma 4 RCA, and authoritative runbook matching)
 - Frontend Build: `cd frontend && npm run build` (Clean production bundle built with 0 TypeScript errors)
 - Docker Compose validation: `docker compose config --quiet` (Valid configuration)
+
+---
+
+## License
+
+This project is licensed under the [PolyForm Noncommercial License 1.0.0](file:///home/karan/projects/ai-assisted-logs-rca/LICENSE) (`PolyForm-Noncommercial-1.0.0`).
+See the [LICENSE](file:///home/karan/projects/ai-assisted-logs-rca/LICENSE) file for complete terms and permitted noncommercial uses.
+
