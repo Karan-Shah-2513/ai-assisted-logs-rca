@@ -26,3 +26,4 @@
 - [x] Task 26: Replace OpenAI RCA calls with hosted Gemma 4 generation via the official Google GenAI SDK and existing GEMINI_API_KEY; configure a supported Gemma 4 model ID and preserve structured RCA, deterministic fallback, tests, and docs | Complexity: Medium
 - [x] Task 27: Preserve the top qualifying structured RAG runbook match as the authoritative report/UI value, independent of Gemma output, and cover matched/no-match/fallback behavior | Complexity: Medium
 - [] Task 28: Resolve bug : when we bust outage for more than 1 incident together. the AiRcaService always responds with deterministic fallback answer instead of AI generated RCA.
+- [x] Task 29: Implement asynchronous HTTP error log ingestion in tenant-common (AircaLogReporter) using a dedicated bounded executor pool / CompletableFuture so tenant request threads never block on log shipping | Complexity: Medium

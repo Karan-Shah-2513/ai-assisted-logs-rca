@@ -15,4 +15,12 @@ public class AircaLogShipper extends AircaLogReporter {
     public AircaLogShipper(TenantAircaProperties properties, RestClient.Builder restClientBuilder) {
         super(properties, restClientBuilder);
     }
+
+    public AircaLogShipper(TenantAircaProperties properties, RestClient restClient, java.util.concurrent.ExecutorService executor) {
+        super(properties, restClient, executor);
+    }
+
+    public AircaLogShipper(TenantAircaProperties properties, RestClient.Builder restClientBuilder, java.util.concurrent.ExecutorService executor) {
+        super(properties, restClientBuilder, executor);
+    }
 }

@@ -40,6 +40,31 @@ public class TenantAircaProperties {
      */
     private int readTimeoutMs = 5000;
 
+    /**
+     * Whether error log ingestion to Airca should be executed asynchronously.
+     */
+    private boolean async = true;
+
+    /**
+     * Core pool size for asynchronous Airca log reporting.
+     */
+    private int corePoolSize = 2;
+
+    /**
+     * Maximum pool size for asynchronous Airca log reporting.
+     */
+    private int maxPoolSize = 4;
+
+    /**
+     * Bounded queue capacity for asynchronous Airca log reporting.
+     */
+    private int queueCapacity = 1000;
+
+    /**
+     * Timeout in milliseconds to await termination of the executor service during graceful shutdown.
+     */
+    private int shutdownTimeoutMs = 5000;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -94,5 +119,64 @@ public class TenantAircaProperties {
 
     public void setReadTimeoutMs(int readTimeoutMs) {
         this.readTimeoutMs = readTimeoutMs;
+    }
+
+    public boolean isAsync() {
+        return async;
+    }
+
+    public void setAsync(boolean async) {
+        this.async = async;
+    }
+
+    public boolean isAsyncEnabled() {
+        return async;
+    }
+
+    public void setAsyncEnabled(boolean asyncEnabled) {
+        this.async = asyncEnabled;
+    }
+
+    public int getCorePoolSize() {
+        return corePoolSize;
+    }
+
+    public void setCorePoolSize(int corePoolSize) {
+        this.corePoolSize = corePoolSize;
+    }
+
+    public int getThreadPoolSize() {
+        return corePoolSize;
+    }
+
+    public void setThreadPoolSize(int threadPoolSize) {
+        this.corePoolSize = threadPoolSize;
+        if (this.maxPoolSize < threadPoolSize) {
+            this.maxPoolSize = threadPoolSize;
+        }
+    }
+
+    public int getMaxPoolSize() {
+        return maxPoolSize;
+    }
+
+    public void setMaxPoolSize(int maxPoolSize) {
+        this.maxPoolSize = maxPoolSize;
+    }
+
+    public int getQueueCapacity() {
+        return queueCapacity;
+    }
+
+    public void setQueueCapacity(int queueCapacity) {
+        this.queueCapacity = queueCapacity;
+    }
+
+    public int getShutdownTimeoutMs() {
+        return shutdownTimeoutMs;
+    }
+
+    public void setShutdownTimeoutMs(int shutdownTimeoutMs) {
+        this.shutdownTimeoutMs = shutdownTimeoutMs;
     }
 }
