@@ -1,0 +1,102 @@
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+logging:
+  level:
+    com.airca.ai.AiRcaService: DEBUG
+
+spring:
+  application:
+    name: airca-backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/airca}
+    username: ${SPRING_DATASOURCE_USERNAME:airca_app}
+    password: ${SPRING_DATASOURCE_PASSWORD:airca_app}
+    hikari:
+      maximum-pool-size: ${DB_POOL_SIZE:20}
+      minimum-idle: 2
+      connection-timeout: 30000
+      pool-name: airca-postgres
+      initialization-fail-timeout: ${DB_INITIALIZATION_FAIL_TIMEOUT:-1}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+        format_sql: false
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.xml
+    url: ${SPRING_LIQUIBASE_URL:${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/airca}}
+    user: ${SPRING_LIQUIBASE_USER:${SPRING_LIQUIBASE_USERNAME:${LIQUIBASE_USER:airca}}}
+    password: ${SPRING_LIQUIBASE_PASSWORD:${LIQUIBASE_PASSWORD:airca}}
+    parameters:
+      app_user: ${SPRING_DATASOURCE_USERNAME:airca_app}
+      app_password: ${SPRING_DATASOURCE_PASSWORD:airca_app}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    producer:
+      acks: all
+      retries: 5
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+      properties:
+        enable.idempotence: true
+        max.in.flight.requests.per.connection: 5
+        spring.json.add.type.headers: false
+    consumer:
+      group-id: airca-log-processors
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.springframework.kafka.support.serializer.JsonDeserializer
+      properties:
+        spring.json.trusted.packages: com.airca.ingestion
+        spring.json.value.default.type: com.airca.ingestion.LogMessage
+    listener:
+      ack-mode: record
+
+airca:
+  ingestion:
+    topic: raw-error-logs
+    send-timeout: 10s
+  multitenancy:
+    default-tenant-id: 11111111-1111-1111-1111-111111111111
+  security:
+    tenant-api-keys:
+      "11111111-1111-1111-1111-111111111111": ${AIRCA_TENANT_API_KEY_ALPHAFIN:${AIRCA_API_KEY_ALPHAFIN:${TENANT_API_KEY_ALPHAFIN:}}}
+      "22222222-2222-2222-2222-222222222222": ${AIRCA_TENANT_API_KEY_BETAPAY:${AIRCA_API_KEY_BETAPAY:${TENANT_API_KEY_BETAPAY:}}}
+    tenant-api-keys-mapping: ${AIRCA_TENANT_API_KEYS:}
+  cors:
+    allowed-origin-patterns: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  repository:
+    root: ${AIRCA_REPOSITORY_ROOT:}
+  git:
+    timeout-seconds: ${GIT_TIMEOUT_SECONDS:5}
+    max-output-bytes: ${GIT_MAX_OUTPUT_BYTES:262144}
+  ai:
+    chat-model: ${AIRCA_AI_CHAT_MODEL:gemma-4-26b-a4b-it}
+
+app:
+  retention:
+    redis-dedup-ttl-minutes: ${REDIS_DEDUP_TTL_MINUTES:60}
+    incident-retention-days: ${INCIDENT_RETENTION_DAYS:30}
+    runbook-chunk-retention-days: ${RUNBOOK_CHUNK_RETENTION_DAYS:180}
+    cleanup-cron: ${RETENTION_CLEANUP_CRON:0 0 3 * * *}
+    enabled: ${RETENTION_CLEANUP_ENABLED:true}
+  ai:
+    embedding:
+      model: gemini-embedding-2
+      dimensions: 768
+    rag:
+      min-similarity: 0.72
+

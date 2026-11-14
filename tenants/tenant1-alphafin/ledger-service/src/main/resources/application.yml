@@ -1,0 +1,22 @@
+server:
+  port: ${SERVER_PORT:8082}
+
+spring:
+  application:
+    name: ledger-service
+
+tenant:
+  airca:
+    enabled: ${AIRCA_SHIPPER_ENABLED:true}
+    airca-url: ${AIRCA_LOGS_URL:http://localhost:8080/api/v1/logs}
+    tenant-id: ${TENANT_ID:11111111-1111-1111-1111-111111111111}
+    api-key: ${TENANT_API_KEY:alphafin-secret-key-1111}
+    service-name: ${SERVICE_NAME:ledger-service}
+    connect-timeout-ms: ${AIRCA_CONNECT_TIMEOUT_MS:3000}
+    read-timeout-ms: ${AIRCA_READ_TIMEOUT_MS:5000}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

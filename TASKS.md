@@ -1,0 +1,29 @@
+- [x] Task 01: Add multi-service Docker Compose topology and health-gated infrastructure | Complexity: Low
+- [x] Task 02: Move the existing backend module to the requested airca-service directory | Complexity: Low
+- [x] Task 03: Scaffold four Spring Boot tenant services and shared error-log shipping contract | Complexity: Medium
+- [x] Task 04: Add the central Airca container to Compose and wire tenant ingestion DNS | Complexity: Medium
+- [x] Task 05: Implement AlphaFin order-service triggerable checkout and bulk defects | Complexity: Low
+- [x] Task 06: Implement AlphaFin ledger-service triggerable transfer and reconcile defects | Complexity: Low
+- [x] Task 07: Implement BetaPay auth-service triggerable token and MFA defects | Complexity: Low
+- [x] Task 08: Implement BetaPay wallet-service triggerable withdrawal and FX defects | Complexity: Low
+- [x] Task 09: Configure gemini-embedding-2 dimensionality, API requests, and vector validation | Complexity: Medium
+- [x] Task 10: Migrate vector schema and retrieval to 768-dimension cosine similarity and thresholding | Complexity: Medium
+- [x] Task 11: Replace mock Git diff provider with real local commit inspection | Complexity: Medium
+- [x] Task 12: Add validated human-verified incident resolution and knowledge indexing | Complexity: Medium
+- [x] Task 13: Add atomic Redis deduplication and telemetry TTL management | Complexity: Medium
+- [x] Task 14: Add scheduled and manual incident/runbook retention cleanup | Complexity: Medium
+- [x] Task 15: Enforce HTTP tenant API-key authentication and tenant context | Complexity: Medium
+- [x] Task 16: Enforce tenant authorization on WebSocket CONNECT and SUBSCRIBE | Complexity: Medium
+- [x] Task 17: Enforce PostgreSQL RLS with a dedicated NOBYPASSRLS application role | Complexity: Medium
+- [x] Task 18: Add Testcontainers integration-test infrastructure and test configuration | Complexity: Medium
+- [x] Task 19: Verify RLS isolation, Redis TTL/deduplication, and WebSocket tenant authorization | Complexity: Medium
+- [x] Task 20: Verify embedding dimensionality, semantic retrieval, and verified feedback loop | Complexity: Medium
+- [x] Task 21: Replace complex frontend widgets with a minimal tenant-aware incident dashboard | Complexity: Medium
+- [x] Task 22: Add tenant bug trigger/burst controls, RCA inspection, and verified resolution UI | Complexity: Medium
+- [x] Task 23: Document exact demo commands, endpoints, broken-code locations, and end-to-end startup | Complexity: Low
+- [x] Task 24: Replace direct Gemini embedding calls with the official google-genai Java SDK after reviewing current AI Studio docs; preserve 768-dimension validation, matching retrieval/query behavior, and focused tests with minimal scope | Complexity: Medium
+- [x] Task 25: Build all four tenant service JARs in multi-stage Docker builds from the Maven reactor and keep runtime images JRE-only | Complexity: Medium
+- [x] Task 26: Replace OpenAI RCA calls with hosted Gemma 4 generation via the official Google GenAI SDK and existing GEMINI_API_KEY; configure a supported Gemma 4 model ID and preserve structured RCA, deterministic fallback, tests, and docs | Complexity: Medium
+- [x] Task 27: Preserve the top qualifying structured RAG runbook match as the authoritative report/UI value, independent of Gemma output, and cover matched/no-match/fallback behavior | Complexity: Medium
+- [] Task 28: Resolve bug : when we bust outage for more than 1 incident together. the AiRcaService always responds with deterministic fallback answer instead of AI generated RCA.
+- [x] Task 29: Implement asynchronous HTTP error log ingestion in tenant-common (AircaLogReporter) using a dedicated bounded executor pool / CompletableFuture so tenant request threads never block on log shipping | Complexity: Medium

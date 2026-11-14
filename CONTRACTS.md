@@ -3,9 +3,9 @@
 ## 1. Directory & Layer Ownership
 - **Sub-Agent 1 (`Infra-DB-Backend-Core`)**:
   - `/docker-compose.yml`
-  - `/backend/pom.xml`
-  - `/backend/src/main/resources/application.yml`
-  - `/backend/src/main/resources/db/changelog/**` (Liquibase migrations & seed data)
+  - `/airca-service/pom.xml`
+  - `/airca-service/src/main/resources/application.yml`
+  - `/airca-service/src/main/resources/db/changelog/**` (Liquibase migrations & seed data)
   - Base packages:
     - `com.airca.config` (Kafka, Redis, WebMvc, DataSource, Security/CORS)
     - `com.airca.multitenancy` (TenantContext, TenantFilter, DataSourceTenantAspect)
@@ -17,7 +17,7 @@
 
 - **Sub-Agent 2 (`AI-RAG-Chaos-Engine`)**:
   - Packages:
-    - `com.airca.ai` (Spring AI / Gemini service, MockAiFallbackService, Prompt engineering, AiRcaReport generator)
+    - `com.airca.ai` (Google GenAI SDK, hosted Gemma 4 RCA, Gemini embedding service, deterministic fallback RCA, prompt engineering, AiRcaReport generator)
     - `com.airca.rag` (VectorRetrieverService, GitDiffService, PgVector similarity search)
     - `com.airca.websocket` (WebSocketConfig, StompBroadcasterService)
     - `com.airca.chaos` (ChaosSimulatorService, ChaosController)
