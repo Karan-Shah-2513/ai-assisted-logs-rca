@@ -262,4 +262,55 @@ class RedisDeduplicatorServiceTest {
         assertThrows(IllegalArgumentException.class, () -> new RedisDeduplicatorService(redisTemplate, 0L));
         assertThrows(IllegalArgumentException.class, () -> new RedisDeduplicatorService(redisTemplate, -10L));
     }
+
+    @Test
+    void incrementDecisionGatedLogs_incrementsWithCorrectKeyAndTtl() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any())).thenReturn(1L);
+
+        long count = service.incrementDecisionGatedLogs("tenant-alpha");
+
+        assertEquals(1L, count);
+        verify(redisTemplate).execute(
+                eq(RedisDeduplicatorService.INCREMENT_SCRIPT),
+                eq(List.of("tenant:tenant-alpha:stats:decision_gated_logs")),
+                eq(String.valueOf(3600L)));
+
+        assertThrows(IllegalArgumentException.class, () -> service.incrementDecisionGatedLogs(null));
+        assertThrows(IllegalArgumentException.class, () -> service.incrementDecisionGatedLogs("  "));
+    }
+
+    @Test
+    void incrementDecisionEvaluated_and_recordDecisionExecution_manageCountersWithTtl() {
+        when(redisTemplate.execute(any(RedisScript.class), anyList(), any())).thenReturn(1L);
+
+        long count = service.incrementDecisionEvaluated("tenant-beta");
+        assertEquals(1L, count);
+        verify(redisTemplate).execute(
+                eq(RedisDeduplicatorService.INCREMENT_SCRIPT),
+                eq(List.of("tenant:tenant-beta:stats:decision_evaluated")),
+                eq(String.valueOf(3600L)));
+
+        service.recordDecisionExecution("tenant-beta", 125L);
+        verify(redisTemplate).execute(
+                eq(RedisDeduplicatorService.INCREMENT_BY_SCRIPT),
+                eq(List.of("tenant:tenant-beta:stats:decision_total_latency_ms")),
+                eq("125"),
+                eq(String.valueOf(3600L)));
+    }
+
+    @Test
+    void getDecisionStatsAndLatency_calculatesAverageProperly() {
+        when(valueOperations.get("tenant:tenant-beta:stats:decision_gated_logs")).thenReturn("8");
+        when(valueOperations.get("tenant:tenant-beta:stats:decision_evaluated")).thenReturn("4");
+        when(valueOperations.get("tenant:tenant-beta:stats:decision_total_latency_ms")).thenReturn("400");
+
+        assertEquals(8L, service.getDecisionGatedLogs("tenant-beta"));
+        assertEquals(4L, service.getDecisionEvaluatedCount("tenant-beta"));
+        assertEquals(100.0, service.getAverageDecisionLatencyMs("tenant-beta"), 0.001);
+
+        // Blank or zero returns defaults
+        assertEquals(0L, service.getDecisionGatedLogs(null));
+        assertEquals(0L, service.getDecisionEvaluatedCount("  "));
+        assertEquals(0.0, service.getAverageDecisionLatencyMs(null), 0.001);
+    }
 }

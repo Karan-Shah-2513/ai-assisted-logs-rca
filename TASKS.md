@@ -27,3 +27,14 @@
 - [x] Task 27: Preserve the top qualifying structured RAG runbook match as the authoritative report/UI value, independent of Gemma output, and cover matched/no-match/fallback behavior | Complexity: Medium
 - [] Task 28: Resolve bug : when we bust outage for more than 1 incident together. the AiRcaService always responds with deterministic fallback answer instead of AI generated RCA.
 - [x] Task 29: Implement asynchronous HTTP error log ingestion in tenant-common (AircaLogReporter) using a dedicated bounded executor pool / CompletableFuture so tenant request threads never block on log shipping | Complexity: Medium
+
+## Gemini Decisions Gate (`gemini-decision-1`)
+
+- [x] Task 30: Add typed Gemini Decisions API request/answer DTOs and model/endpoint configuration | Complexity: Low
+- [x] Task 31: Implement the v1beta Decisions API client with the existing Spring HTTP/Jackson stack and deterministic offline fallback | Complexity: Medium
+- [x] Task 32: Persist calibrated decision metadata on incidents with a tenant-safe Liquibase migration | Complexity: Low
+- [x] Task 33: Integrate the decision gate into the unique-incident RCA flow, including noise gating, evidence filtering, and calibrated severity/confidence | Complexity: Medium
+- [x] Task 34: Expose decision gate counts/latency through tenant telemetry and incident WebSocket updates | Complexity: Medium
+- [x] Task 35: Add the decision KPI, calibrated incident badges, and System 1 guardrail card to the minimal UI | Complexity: Low
+- [x] Task 36: Add focused Decisions API, orchestration, persistence/RLS, and tenant broadcast integration tests | Complexity: Medium
+- [x] Task 37: Document the System 1 / System 2 / embedding triad and demo steps | Complexity: Low

@@ -1,5 +1,55 @@
 export type IncidentStatus = 'OPEN' | 'INVESTIGATING' | 'RESOLVED'
 export type Severity = 'P0' | 'P1' | 'P2' | 'P3'
+export type TriageRoute = 'deep_gemma4_rca' | 'fast_rag_only' | 'skip_llm_noise'
+export type RemediationSafety = 'safe_auto_rollback' | 'requires_human_approval' | 'escalate_dba_finance'
+
+export interface DecisionGateCriteria {
+  noiseGatePassed?: boolean
+  triageRoute?: string
+  groundingConfidence?: number
+  isActionableNoul?: number
+  isActionableConfidence?: number
+  rawTriageRouteChoice?: string
+  commitCausedBugNoul?: number
+  runbookAppliesNoul?: number
+  severityScore?: number
+  severityConfidence?: number
+}
+
+export interface DecisionGateAnswer {
+  type?: string
+  noul?: number
+  choice?: string
+  score?: number
+  confidence?: number
+  probabilities?: Record<string, number>
+}
+
+export interface DecisionGateRemediationSafety {
+  type?: string
+  choice?: RemediationSafety | string
+  confidence?: number
+  probabilities?: Record<string, number>
+}
+
+export interface DecisionGateMetadata {
+  status?: string
+  decision?: string
+  decisionType?: string
+  triageRoute?: TriageRoute | string
+  calibratedSeverity?: Severity | string
+  calibratedConfidence?: number
+  gitDiffIncluded?: boolean
+  runbookContextIncluded?: boolean
+  noiseGated?: boolean
+  decisionLatencyMs?: number
+  criteria?: DecisionGateCriteria
+  reasoning?: string
+  answers?: Record<string, DecisionGateAnswer>
+  remediationSafety?: DecisionGateRemediationSafety
+  usage?: Record<string, unknown>
+  evaluatedAt?: string
+}
 
 export interface AiRcaReport {
   rootCauseSummary: string
@@ -22,6 +72,7 @@ export interface Incident {
   aiRcaJson?: AiRcaReport | null
   firstSeen: string
   lastSeen: string
+  decisionGateJson?: DecisionGateMetadata | null
 }
 
 export interface Telemetry {
@@ -31,6 +82,9 @@ export interface Telemetry {
   uniqueIncidents: number
   deduplicationRatio: number
   estimatedCostSavedUsd: number
+  decisionGatedLogs?: number
+  totalDecisions?: number
+  averageDecisionLatencyMs?: number
 }
 
 export interface Tenant {

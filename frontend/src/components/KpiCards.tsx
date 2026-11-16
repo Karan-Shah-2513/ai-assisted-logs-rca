@@ -1,4 +1,4 @@
-import { Activity, CircleDollarSign, Layers3, Workflow } from 'lucide-react'
+import { Activity, CircleDollarSign, Layers3, ShieldCheck, Workflow } from 'lucide-react'
 import type { Telemetry } from '../types'
 
 interface KpiCardsProps {
@@ -39,6 +39,15 @@ export function KpiCards({ telemetry, loading }: KpiCardsProps) {
       icon: CircleDollarSign,
       note: 'Through log deduplication',
       tone: 'amber',
+    },
+    {
+      label: 'Decision-Gated / Auto-Triaged',
+      value: telemetry ? number.format(telemetry.totalDecisions ?? 0) : loading ? '…' : '0',
+      icon: ShieldCheck,
+      note: telemetry
+        ? `${Math.round(telemetry.averageDecisionLatencyMs ?? 0)}ms decision latency`
+        : 'System 1 gate active',
+      tone: 'teal',
     },
   ]
 

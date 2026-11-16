@@ -101,7 +101,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .status-dot.amber { background: #f59e0b; box-shadow: 0 0 6px #f59e0b99; }
 
 /* KPI Overview Cards */
-.kpi-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; padding: 4px 0 16px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; padding: 4px 0 16px; }
 .kpi-card { display: flex; align-items: flex-start; gap: 11px; min-height: 100px; padding: 14px 15px 12px; border: 1px solid #28282c; border-radius: 8px; background: linear-gradient(135deg, #141416, #101012); }
 .kpi-card.is-loading { opacity: .7; }
 .kpi-icon { display: grid; place-items: center; width: 30px; height: 30px; flex: 0 0 30px; border: 1px solid; border-radius: 7px; }
@@ -109,6 +109,7 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .kpi-icon.blue { color: #82b8ff; border-color: #2e4564; background: #142031; }
 .kpi-icon.violet { color: #c4a4ff; border-color: #4a3765; background: #241a32; }
 .kpi-icon.amber { color: #efc46d; border-color: #57482d; background: #282013; }
+.kpi-icon.teal { color: #5eead4; border-color: #134e4a; background: #042f2e; }
 .kpi-copy { min-width: 0; }
 .kpi-label { margin: 0 0 5px; color: #919199; font-size: 10px; }
 .kpi-value { margin: 0; color: #f4f4f5; font: 700 22px Manrope, sans-serif; letter-spacing: -.5px; line-height: 1.1; }
@@ -176,6 +177,231 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .status-open { border-color: #60442a; color: #e8ad61; background: #261e15; }
 .status-investigating { border-color: #394b72; color: #98b3ee; background: #171e2b; }
 .status-resolved { border-color: #354c32; color: #9fce8d; background: #182117; }
+
+/* Decision Route & Safety Badges (Task 35) */
+.route-safety-cell { vertical-align: top; }
+.route-safety-group { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.route-placeholder { color: #52525b; font-size: 11px; }
+
+.route-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid;
+  border-radius: 4px;
+  font: 9px 'DM Mono', monospace;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.route-deep_gemma4_rca {
+  border-color: #4a3765;
+  color: #c4a4ff;
+  background: #20162e;
+}
+.route-fast_rag_only {
+  border-color: #234e62;
+  color: #67d4f3;
+  background: #10232c;
+}
+.route-skip_llm_noise {
+  border-color: #3f3f46;
+  color: #a1a1aa;
+  background: #18181b;
+}
+
+.safety-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border: 1px solid;
+  border-radius: 4px;
+  font: 9px 'DM Mono', monospace;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.safety-pill i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+}
+/* safety green safe_auto_rollback, amber requires_human_approval, red escalate_dba_finance */
+.safety-safe_auto_rollback {
+  border-color: #27491d;
+  color: #84cc16;
+  background: #132011;
+}
+.safety-requires_human_approval {
+  border-color: #55441a;
+  color: #f59e0b;
+  background: #231c0e;
+}
+.safety-escalate_dba_finance {
+  border-color: #512528;
+  color: #ef4444;
+  background: #231214;
+}
+
+/* ========================================================
+   TASK 35: System 1 Decision Gate Card (Drawer)
+   ======================================================== */
+.system1-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 13px 15px;
+  border: 1px solid #27361f;
+  border-radius: 7px;
+  background: linear-gradient(135deg, #131a10, #0d120a);
+}
+
+.system1-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid #1c2715;
+}
+
+.system1-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.system1-badge-icon {
+  color: #bef264;
+}
+
+.system1-card-title {
+  color: #f4f4f5;
+  font: 600 12px Manrope, sans-serif;
+  letter-spacing: -0.2px;
+}
+
+.system1-model-tag {
+  color: #bbf06a;
+  font: 10px 'DM Mono', monospace;
+  font-weight: 600;
+  padding: 1px 5px;
+  border: 1px solid #364426;
+  border-radius: 4px;
+  background: #172111;
+}
+
+.system1-latency-badge {
+  color: #85858d;
+  font: 9px 'DM Mono', monospace;
+  padding: 2px 6px;
+  border: 1px solid #27272a;
+  border-radius: 4px;
+  background: #141416;
+}
+
+.system1-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+.system1-metric-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.system1-metric-item .metric-label {
+  color: #85858d;
+  font-size: 10px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.system1-metric-item .metric-value {
+  color: #f4f4f5;
+  font-size: 11px;
+  font-family: 'DM Mono', monospace;
+  font-weight: 500;
+}
+
+.system1-metric-item .metric-value.text-amber {
+  color: #f59e0b;
+}
+
+.metric-value-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.safety-conf-text {
+  color: #85858d;
+  font: 9px 'DM Mono', monospace;
+}
+
+.system1-guardrail-row {
+  padding-top: 6px;
+  border-top: 1px solid #1c2715;
+}
+
+.system1-action-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.system1-rollback-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #3b5a22;
+  border-radius: 5px;
+  background: linear-gradient(135deg, #243516, #1a2510);
+  color: #bef264;
+  font-size: 11px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+.system1-rollback-btn:hover {
+  background: linear-gradient(135deg, #30461c, #223214);
+  border-color: #557732;
+  color: #d6ff7d;
+}
+
+.system1-guardrail-caption {
+  color: #85858d;
+  font-size: 10px;
+}
+
+.system1-locked-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #4a3e26;
+  border-radius: 5px;
+  background: #1f180d;
+  color: #ecd5a0;
+  font-size: 10px;
+}
+
+.system1-locked-banner .locked-icon {
+  color: #f59e0b;
+  flex-shrink: 0;
+}
+
+.locked-message {
+  line-height: 1.35;
+}
 
 /* States: Loading, Error, Empty */
 .incident-state-container { display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 240px; padding: 32px 20px; text-align: center; }

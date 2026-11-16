@@ -38,4 +38,9 @@
                  stripComments="false"
                  splitStatements="false"/>
     </changeSet>
+    <changeSet id="007-add-incident-decision-gate-json" author="airca">
+        <sqlFile path="db/changelog/007-add-incident-decision-gate-json.sql"
+                 relativeToChangelogFile="false"
+                 stripComments="false"/>
+    </changeSet>
 </databaseChangeLog>

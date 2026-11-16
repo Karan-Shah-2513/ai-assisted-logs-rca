@@ -163,7 +163,8 @@ public class IncidentController {
                 incident.getStatus(),
                 incident.getAiRcaJson(),
                 incident.getFirstSeen(),
-                incident.getLastSeen());
+                incident.getLastSeen(),
+                incident.getDecisionGateJson());
     }
 
     public record TenantSummary(UUID id, String name) {

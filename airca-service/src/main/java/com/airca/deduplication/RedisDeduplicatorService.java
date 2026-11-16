@@ -30,6 +30,17 @@ public class RedisDeduplicatorService {
     public static final RedisScript<Long> INCREMENT_SCRIPT =
             new DefaultRedisScript<>(INCREMENT_WITH_TTL_LUA, Long.class);
 
+    public static final String INCREMENT_BY_WITH_TTL_LUA = """
+            local current = redis.call('INCRBY', KEYS[1], ARGV[1])
+            if current == tonumber(ARGV[1]) or redis.call('TTL', KEYS[1]) == -1 then
+                redis.call('EXPIRE', KEYS[1], ARGV[2])
+            end
+            return current
+            """;
+
+    public static final RedisScript<Long> INCREMENT_BY_SCRIPT =
+            new DefaultRedisScript<>(INCREMENT_BY_WITH_TTL_LUA, Long.class);
+
     public static final long DEFAULT_TTL_MINUTES = 60L;
 
     private static final Pattern UUID_PATTERN = Pattern.compile(
@@ -83,6 +94,80 @@ public class RedisDeduplicatorService {
 
     public static String statsDeduplicatedKey(String tenantId) {
         return deduplicatedStatsKey(tenantId);
+    }
+
+    public static String statsDecisionGatedLogsKey(String tenantId) {
+        return "tenant:" + tenantId + ":stats:decision_gated_logs";
+    }
+
+    public static String decisionGatedLogsKey(String tenantId) {
+        return statsDecisionGatedLogsKey(tenantId);
+    }
+
+    public long incrementDecisionGatedLogs(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new IllegalArgumentException("Tenant ID must not be blank");
+        }
+        return increment(statsDecisionGatedLogsKey(tenantId));
+    }
+
+    public long getDecisionGatedLogs(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            return 0L;
+        }
+        return readCounter(statsDecisionGatedLogsKey(tenantId));
+    }
+
+    public static String statsDecisionEvaluatedKey(String tenantId) {
+        return "tenant:" + tenantId + ":stats:decision_evaluated";
+    }
+
+    public static String decisionEvaluatedKey(String tenantId) {
+        return statsDecisionEvaluatedKey(tenantId);
+    }
+
+    public static String statsDecisionTotalLatencyKey(String tenantId) {
+        return "tenant:" + tenantId + ":stats:decision_total_latency_ms";
+    }
+
+    public static String decisionTotalLatencyKey(String tenantId) {
+        return statsDecisionTotalLatencyKey(tenantId);
+    }
+
+    public long incrementDecisionEvaluated(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new IllegalArgumentException("Tenant ID must not be blank");
+        }
+        return increment(statsDecisionEvaluatedKey(tenantId));
+    }
+
+    public long getDecisionEvaluatedCount(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            return 0L;
+        }
+        return readCounter(statsDecisionEvaluatedKey(tenantId));
+    }
+
+    public void recordDecisionExecution(String tenantId, long latencyMs) {
+        if (tenantId == null || tenantId.isBlank()) {
+            throw new IllegalArgumentException("Tenant ID must not be blank");
+        }
+        increment(statsDecisionEvaluatedKey(tenantId));
+        if (latencyMs > 0) {
+            incrementBy(statsDecisionTotalLatencyKey(tenantId), latencyMs);
+        }
+    }
+
+    public double getAverageDecisionLatencyMs(String tenantId) {
+        if (tenantId == null || tenantId.isBlank()) {
+            return 0.0;
+        }
+        long count = readCounter(statsDecisionEvaluatedKey(tenantId));
+        if (count <= 0) {
+            return 0.0;
+        }
+        long totalLatency = readCounter(statsDecisionTotalLatencyKey(tenantId));
+        return (double) totalLatency / count;
     }
 
     public long getTtlMinutes() {
@@ -155,6 +240,15 @@ public class RedisDeduplicatorService {
             throw new IllegalStateException("Redis did not return a valid incremented counter for " + key + ": " + value);
         }
         return value;
+    }
+
+    private long incrementBy(String key, long delta) {
+        Long value = redisTemplate.execute(
+                INCREMENT_BY_SCRIPT,
+                Collections.singletonList(key),
+                String.valueOf(delta),
+                String.valueOf(ttlSeconds));
+        return value != null ? value : 0L;
     }
 
     public static String normalize(String stackTrace) {

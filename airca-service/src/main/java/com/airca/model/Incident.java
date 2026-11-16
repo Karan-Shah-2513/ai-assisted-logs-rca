@@ -51,6 +51,10 @@ public class Incident {
     @Column(name = "ai_rca_json", columnDefinition = "jsonb")
     private JsonNode aiRcaJson;
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "decision_gate_json", columnDefinition = "jsonb")
+    private JsonNode decisionGateJson;
+
     @Column(name = "first_seen", nullable = false)
     private Instant firstSeen;
 

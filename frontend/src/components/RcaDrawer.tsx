@@ -7,6 +7,9 @@ import {
   GitCommitHorizontal,
   Info,
   KeyRound,
+  Lock,
+  Play,
+  ShieldCheck,
   Sparkles,
   Terminal,
   X,
@@ -16,6 +19,15 @@ import { twMerge } from 'tailwind-merge'
 import { DiffViewer } from './DiffViewer'
 import { resolveIncident } from '../api'
 import type { Incident, ResolveIncidentRequest } from '../types'
+import {
+  SYSTEM_1_CARD_TITLE,
+  formatCommitEvidence,
+  formatRunbookRelevance,
+  getDecisionRoute,
+  getLockedApprovalReason,
+  getRemediationSafety,
+  isSafeAutoRollbackEligible,
+} from '../decision-gate'
 
 const cn = (...values: Parameters<typeof clsx>) => twMerge(clsx(...values))
 
@@ -57,6 +69,55 @@ export function RcaDrawer({
   const hasAiRca = Boolean(report && report.rootCauseSummary)
   const confidence = report?.confidenceScore ?? 0
   const isResolved = incident.status === 'RESOLVED'
+
+  // System 1 Calibrated Decision Gate (Task 35)
+  const gate = incident.decisionGateJson
+  const effectiveSeverity = gate?.calibratedSeverity || report?.severity || 'P2'
+  const effectiveConfidence =
+    gate?.calibratedConfidence != null
+      ? gate.calibratedConfidence
+      : report?.confidenceScore != null
+      ? report.confidenceScore
+      : null
+
+  const triageRoute = getDecisionRoute(incident) || 'deep_gemma4_rca'
+  const gateLatencyMs = gate?.decisionLatencyMs
+
+  const isActionableNoul = gate?.criteria?.isActionableNoul ?? gate?.answers?.is_actionable?.noul
+  const isActionableConfidence =
+    gate?.criteria?.isActionableConfidence ?? gate?.answers?.is_actionable?.confidence
+
+  const commitNoul = gate?.criteria?.commitCausedBugNoul ?? gate?.answers?.commit_caused_bug?.noul
+  const gitDiffIncluded = gate?.gitDiffIncluded ?? (commitNoul != null ? commitNoul >= 0.40 : true)
+  const commitDisplay = formatCommitEvidence(commitNoul, gitDiffIncluded)
+
+  const runbookNoul = gate?.criteria?.runbookAppliesNoul ?? gate?.answers?.runbook_applies?.noul
+  const runbookIncluded =
+    gate?.runbookContextIncluded ?? (runbookNoul != null ? runbookNoul >= 0.40 : true)
+  const runbookDisplay = formatRunbookRelevance(runbookNoul, runbookIncluded)
+
+  const safetyChoice = getRemediationSafety(incident) || 'requires_human_approval'
+
+  const rawSafetyConfidence =
+    gate?.remediationSafety?.confidence ?? gate?.answers?.remediation_safety?.confidence
+  const safetyConfidence =
+    rawSafetyConfidence != null
+      ? rawSafetyConfidence > 1
+        ? rawSafetyConfidence / 100
+        : rawSafetyConfidence
+      : gate?.calibratedConfidence != null
+      ? gate.calibratedConfidence / 100
+      : null
+
+  const canAutoRollback = isSafeAutoRollbackEligible(safetyChoice, safetyConfidence)
+  const lockedApprovalReason = getLockedApprovalReason(safetyChoice, safetyConfidence)
+
+  const handleGuardedRollback = () => {
+    onNotify(
+      'Guarded UI affordance: automated rollback execution is non-operational in this environment. No rollback was executed.',
+      'warning',
+    )
+  }
 
   const rootCauseFieldId = useId()
   const fixCommandFieldId = useId()
@@ -216,13 +277,15 @@ export function RcaDrawer({
             <span
               className={cn(
                 'severity-pill',
-                report?.severity
-                  ? `severity-${report.severity.toLowerCase()}`
+                effectiveSeverity
+                  ? `severity-${effectiveSeverity.toLowerCase()}`
                   : 'severity-p2',
               )}
             >
               <i aria-hidden="true" />
-              {report?.severity || 'P2'}
+              {effectiveConfidence != null
+                ? `${effectiveSeverity} (${Math.round(effectiveConfidence)}% conf)`
+                : effectiveSeverity}
             </span>
 
             <div className="drawer-service-info">
@@ -243,11 +306,113 @@ export function RcaDrawer({
             </div>
           </div>
 
-          {/* Section 1: AI Root Cause Analysis (Honest Handling) */}
-          <section className="inspector-section" aria-label="Root cause analysis">
+          {/* System 1: Calibrated Decision Gate Card (Task 35) */}
+          <section className="inspector-section system1-section" aria-label="System 1 calibrated decision gate">
             <div className="section-label">
               <span>01</span>
-              <span>ROOT CAUSE ANALYSIS</span>
+              <span>SYSTEM 1: GEMINI DECISION 1 (0 OUTPUT TOKENS)</span>
+            </div>
+
+            <div className="system1-card">
+              <div className="system1-card-header">
+                <div className="system1-title-group">
+                  <ShieldCheck size={14} className="system1-badge-icon" aria-hidden="true" />
+                  <span className="system1-card-title">{SYSTEM_1_CARD_TITLE || 'System 1: Gemini Decision 1 (0 Output Tokens)'}</span>
+                  <span className="system1-model-tag">gemini-decision-1</span>
+                  {triageRoute && (
+                    <span className={`route-pill route-${triageRoute.toLowerCase()}`}>
+                      {triageRoute}
+                    </span>
+                  )}
+                </div>
+                {gateLatencyMs != null && (
+                  <span className="system1-latency-badge">
+                    {gateLatencyMs}ms gate latency
+                  </span>
+                )}
+              </div>
+
+              <div className="system1-metrics-grid">
+                <div className="system1-metric-item">
+                  <span className="metric-label">Actionable Prob / Conf</span>
+                  <strong className="metric-value">
+                    {isActionableNoul != null
+                      ? `${Math.round(isActionableNoul * 100)}% prob${
+                          isActionableConfidence != null
+                            ? ` (${Math.round(isActionableConfidence * 100)}% conf)`
+                            : ''
+                        }`
+                      : '—'}
+                  </strong>
+                </div>
+
+                <div className="system1-metric-item">
+                  <span className="metric-label">Suspect Commit</span>
+                  <strong className={cn('metric-value', commitDisplay.includes('Filtered Out') && 'text-amber')}>
+                    {commitDisplay}
+                  </strong>
+                </div>
+
+                <div className="system1-metric-item">
+                  <span className="metric-label">Runbook Relevance</span>
+                  <strong className="metric-value">
+                    {runbookDisplay}
+                  </strong>
+                </div>
+
+                <div className="system1-metric-item">
+                  <span className="metric-label">Remediation Safety</span>
+                  <div className="metric-value-wrap">
+                    <span
+                      className={`safety-pill safety-${safetyChoice.toLowerCase()}`}
+                      title={`Safety: ${safetyChoice}`}
+                    >
+                      <i aria-hidden="true" />
+                      {safetyChoice}
+                    </span>
+                    {safetyConfidence != null && (
+                      <span className="safety-conf-text">
+                        {Math.round(safetyConfidence * 100)}% conf
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Guardrail control: Confidence >= 0.85 safe_auto_rollback button or locked approval message */}
+              <div className="system1-guardrail-row">
+                {canAutoRollback ? (
+                  <div className="system1-action-box">
+                    <button
+                      type="button"
+                      className="system1-rollback-btn"
+                      onClick={handleGuardedRollback}
+                      title="Guarded UI affordance: Non-execution mode"
+                    >
+                      <Play size={11} fill="currentColor" aria-hidden="true" />
+                      <span>Safe Auto-Rollback (Guarded)</span>
+                    </button>
+                    <span className="system1-guardrail-caption">
+                      Guarded affordance · Conf: {Math.round((safetyConfidence ?? 0) * 100)}% (threshold ≥ 85%)
+                    </span>
+                  </div>
+                ) : (
+                  <div className="system1-locked-banner" role="status">
+                    <Lock size={12} className="locked-icon" aria-hidden="true" />
+                    <span className="locked-message">
+                      Approval locked: {lockedApprovalReason}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+
+          {/* Section 2: AI Root Cause Analysis (System 2 Gemma RCA) */}
+          <section className="inspector-section" aria-label="Root cause analysis">
+            <div className="section-label">
+              <span>02</span>
+              <span>SYSTEM 2 GEMMA RCA</span>
             </div>
 
             {hasAiRca ? (
@@ -298,11 +463,11 @@ export function RcaDrawer({
             )}
           </section>
 
-          {/* Section 2: Suspected Commit Diff (when available) */}
+          {/* Section 3: Suspected Commit Diff (when available) */}
           {hasAiRca && report?.suspectedCommit && (
             <section className="inspector-section" aria-label="Suspected git change">
               <div className="section-label">
-                <span>02</span>
+                <span>03</span>
                 <span>SUSPECTED CHANGE</span>
               </div>
               <div className="section-title">
@@ -313,11 +478,11 @@ export function RcaDrawer({
             </section>
           )}
 
-          {/* Section 3: Matched Operational Runbook (when available) */}
+          {/* Section 4: Matched Operational Runbook (when available) */}
           {hasAiRca && report?.matchedRunbook && (
             <section className="inspector-section" aria-label="Matched runbook">
               <div className="section-label">
-                <span>03</span>
+                <span>04</span>
                 <span>MATCHED RUNBOOK</span>
               </div>
               <div className="runbook-card">
@@ -333,11 +498,11 @@ export function RcaDrawer({
             </section>
           )}
 
-          {/* Section 4: Suggested Remediation (when available) */}
+          {/* Section 5: Suggested Remediation (when available) */}
           {hasAiRca && report?.suggestedRemediation && (
             <section className="inspector-section" aria-label="Suggested remediation">
               <div className="section-label">
-                <span>04</span>
+                <span>05</span>
                 <span>SUGGESTED REMEDIATION</span>
               </div>
               <div className="remediation-box">
@@ -359,10 +524,10 @@ export function RcaDrawer({
             </section>
           )}
 
-          {/* Section 5: Sanitized Stack Trace Diagnostics */}
+          {/* Section 6: Sanitized Stack Trace Diagnostics */}
           <section className="inspector-section" aria-label="Stack trace diagnostics">
             <div className="section-label">
-              <span>{hasAiRca ? '05' : '02'}</span>
+              <span>{hasAiRca ? '06' : '02'}</span>
               <span>FAILURE SIGNATURE & STACK TRACE</span>
             </div>
             <div className="stack-trace-box">
@@ -387,10 +552,10 @@ export function RcaDrawer({
             </div>
           </section>
 
-          {/* Section 6: Verified Incident Resolution Form (Task 12 & Task 22) */}
+          {/* Section 7: Verified Incident Resolution Form (Task 12 & Task 22) */}
           <section className="inspector-section resolution-section" aria-label="Incident resolution form">
             <div className="section-label">
-              <span>{hasAiRca ? '06' : '03'}</span>
+              <span>{hasAiRca ? '07' : '03'}</span>
               <span>HUMAN-VERIFIED RESOLUTION</span>
             </div>
 

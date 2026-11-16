@@ -1,14 +1,18 @@
 package com.airca.ai;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import java.util.Collections;
 
 import com.airca.dto.AiRcaReport;
 import com.airca.model.Incident;
@@ -738,6 +742,199 @@ class AiRcaServiceTest {
         assertNotNull(report);
         assertEquals(AiRcaService.NO_MATCHING_RUNBOOK, report.matchedRunbook(),
                 "Deterministic fallback triggered by API error must preserve NO_MATCHING_RUNBOOK when no candidate qualified");
+    }
+
+    @Test
+    void analyze_whenDecisionGateTriggersNoiseGate_skipsGemmaAndReturnsIgnoredNoiseReport() {
+        GeminiDecisionGateService gateServiceMock = mock(GeminiDecisionGateService.class);
+        AiRcaService service = new AiRcaService(objectMapper, retriever, API_KEY, MODEL, baseUrl, gateServiceMock);
+        services.add(service);
+
+        Incident incident = createSampleIncident();
+        when(retriever.retrieve(incident)).thenReturn(RetrievalResult.empty("Sample context"));
+
+        GeminiDecisionGateResult noiseGatedResult = new GeminiDecisionGateResult(
+                true, false, false, "P3", 85,
+                objectMapper.createObjectNode().put("status", "IGNORED_NOISE"),
+                null, null);
+
+        when(gateServiceMock.evaluate(eq(incident), any())).thenReturn(noiseGatedResult);
+
+        AiRcaReport report = service.analyze(incident);
+
+        assertNotNull(report);
+        assertEquals("IGNORED_NOISE", report.rootCauseSummary());
+        assertEquals("P3", report.severity());
+        assertEquals(85, report.confidenceScore());
+        // Verify Gemma was NEVER called
+        assertNull(capturedRequest.get(), "Gemma 4 generation must be skipped when noise gate trips");
+    }
+
+    @Test
+    void analyze_whenDecisionGatePasses_overridesSeverityAndConfidenceWithCalibratedValues() throws Exception {
+        GeminiDecisionGateService gateServiceMock = mock(GeminiDecisionGateService.class);
+        AiRcaService service = new AiRcaService(objectMapper, retriever, API_KEY, MODEL, baseUrl, gateServiceMock);
+        services.add(service);
+
+        Incident incident = createSampleIncident();
+        when(retriever.retrieve(incident)).thenReturn(RetrievalResult.empty("Sample context"));
+
+        GeminiDecisionGateResult gateResult = new GeminiDecisionGateResult(
+                false, true, true, "P0", 94,
+                objectMapper.createObjectNode().put("status", "PROCEED"),
+                null, null);
+
+        when(gateServiceMock.evaluate(eq(incident), any())).thenReturn(gateResult);
+
+        String gemmaResponse = """
+                {
+                  "rootCauseSummary": "Connection pool exhaustion in payment gateway",
+                  "suspectedCommit": "a9f120e - refactor: batch refunds",
+                  "matchedRunbook": "Payment Runbook",
+                  "confidenceScore": 60,
+                  "severity": "P2",
+                  "suggestedRemediation": "Restart pool and rollback"
+                }
+                """;
+        responseBody = createGeminiJsonResponse(gemmaResponse);
+
+        AiRcaReport report = service.analyze(incident);
+
+        assertNotNull(report);
+        assertEquals("Connection pool exhaustion in payment gateway", report.rootCauseSummary());
+        // Calibrated overrides: severity P2 overridden with P0, confidence 60 overridden with 94
+        assertEquals("P0", report.severity());
+        assertEquals(94, report.confidenceScore());
+        assertNotNull(capturedRequest.get(), "Gemma generation must be called when noise gate passes");
+    }
+
+    @Test
+    void analyze_whenCommitCausedBugBelowThreshold_omitsGitDiffFromGemmaPrompt() throws Exception {
+        GeminiDecisionGateService gateServiceMock = mock(GeminiDecisionGateService.class);
+        AiRcaService service = new AiRcaService(objectMapper, retriever, API_KEY, MODEL, baseUrl, gateServiceMock);
+        services.add(service);
+
+        Incident incident = createSampleIncident();
+        String gitDiff = "diff --git a/Payment.java b/Payment.java\n+ synchronized void pay() {}";
+        when(retriever.retrieve(incident)).thenReturn(new RetrievalResult(
+                "Relevant git change:\n" + gitDiff,
+                Collections.emptyList(),
+                Collections.emptyList(),
+                gitDiff));
+
+        // commit_caused_bug < 0.40 -> includeGitDiff = false
+        GeminiDecisionGateResult gateResult = new GeminiDecisionGateResult(
+                false, false, true, "P1", 88,
+                objectMapper.createObjectNode().put("status", "PROCEED"),
+                null, null);
+
+        when(gateServiceMock.evaluate(eq(incident), any())).thenReturn(gateResult);
+
+        String gemmaResponse = """
+                {
+                  "rootCauseSummary": "Deadlock in Payment",
+                  "suspectedCommit": "No matching commit identified",
+                  "matchedRunbook": "No directly matching runbook found",
+                  "confidenceScore": 80,
+                  "severity": "P1",
+                  "suggestedRemediation": "Mitigate locks"
+                }
+                """;
+        responseBody = createGeminiJsonResponse(gemmaResponse);
+
+        AiRcaReport report = service.analyze(incident);
+
+        assertNotNull(report);
+        assertNotNull(capturedRequest.get());
+        String promptSentToGemma = capturedRequest.get().body();
+        assertFalse(promptSentToGemma.contains("synchronized void pay()"),
+                "Git diff must be omitted from Gemma input when commit_caused_bug is below threshold");
+    }
+
+    @Test
+    void analyze_whenRunbookAppliesBelowThreshold_omitsWeakRunbookContextFromGemmaPrompt() throws Exception {
+        GeminiDecisionGateService gateServiceMock = mock(GeminiDecisionGateService.class);
+        AiRcaService service = new AiRcaService(objectMapper, retriever, API_KEY, MODEL, baseUrl, gateServiceMock);
+        services.add(service);
+
+        Incident incident = createSampleIncident();
+        String weakRunbookText = "THIS_IS_WEAK_RUNBOOK_CHUNK_THAT_DOES_NOT_APPLY";
+        when(retriever.retrieve(incident)).thenReturn(new RetrievalResult(
+                "Context with weak runbook",
+                List.of(new VectorRetrieverService.RunbookMatch("Weak Runbook", weakRunbookText, "runbooks/weak.md", null, 0.28, 0.72)),
+                Collections.emptyList(),
+                ""));
+
+        // runbook_applies < 0.40 -> includeRunbooks = false
+        GeminiDecisionGateResult gateResult = new GeminiDecisionGateResult(
+                false, true, false, "P2", 80,
+                objectMapper.createObjectNode().put("status", "PROCEED"),
+                null, null);
+
+        when(gateServiceMock.evaluate(eq(incident), any())).thenReturn(gateResult);
+
+        String gemmaResponse = """
+                {
+                  "rootCauseSummary": "Generic failure",
+                  "suspectedCommit": "No matching commit identified",
+                  "matchedRunbook": "No directly matching runbook found",
+                  "confidenceScore": 70,
+                  "severity": "P2",
+                  "suggestedRemediation": "Inspect logs"
+                }
+                """;
+        responseBody = createGeminiJsonResponse(gemmaResponse);
+
+        AiRcaReport report = service.analyze(incident);
+
+        assertNotNull(report);
+        assertNotNull(capturedRequest.get());
+        String promptSentToGemma = capturedRequest.get().body();
+        assertFalse(promptSentToGemma.contains(weakRunbookText),
+                "Weak runbook context must be omitted from Gemma input when runbook_applies is below threshold");
+        // But top qualifying structured RAG runbook match is still preserved as authoritative UI/report value per Task 27
+        assertEquals("Weak Runbook", report.matchedRunbook());
+    }
+
+    @Test
+    void analyze_whenTriageRouteIsFastRagOnly_bypassesGemmaAndBuildsReportFromRagEvidence() {
+        GeminiDecisionGateService gateServiceMock = mock(GeminiDecisionGateService.class);
+        AiRcaService service = new AiRcaService(objectMapper, retriever, API_KEY, MODEL, baseUrl, gateServiceMock);
+        services.add(service);
+
+        Incident incident = createSampleIncident();
+        String runbookName = "Payment Gateway Deadlock Runbook (RB-PAY-01)";
+        String runbookText = "Step 1: Check active locks and connections.\nStep 2: Restart pool.";
+        when(retriever.retrieve(incident)).thenReturn(new RetrievalResult(
+                "Runbook: " + runbookName + "\n" + runbookText,
+                List.of(new VectorRetrieverService.RunbookMatch(runbookName, runbookText, "runbooks/pay.md", null, 0.12, 0.88)),
+                Collections.emptyList(),
+                ""));
+
+        GeminiDecisionGateResult fastRagResult = new GeminiDecisionGateResult(
+                false,
+                GeminiDecisionGateService.TRIAGE_FAST_RAG_ONLY,
+                true,
+                true,
+                "P0",
+                93,
+                objectMapper.createObjectNode().put("status", "PROCEED").put("triageRoute", "fast_rag_only"),
+                null,
+                null);
+
+        when(gateServiceMock.evaluate(eq(incident), any())).thenReturn(fastRagResult);
+
+        AiRcaReport report = service.analyze(incident);
+
+        assertNotNull(report);
+        assertEquals(runbookName, report.matchedRunbook(), "Authoritative runbook must match top qualifying runbook");
+        assertEquals("P0", report.severity(), "Calibrated severity must be applied");
+        assertEquals(93, report.confidenceScore(), "Calibrated confidence must be applied");
+        assertNotNull(report.rootCauseSummary(), "Root cause summary must be generated from RAG/runbook evidence");
+        assertNotNull(report.suggestedRemediation(), "Remediation must be generated from RAG/runbook evidence");
+
+        // Verify Gemma 4 generation was NEVER invoked (bypassed)
+        assertNull(capturedRequest.get(), "Gemma 4 generation must be bypassed when triage route is fast_rag_only");
     }
 
     private record CapturedRequest(String method, String path, String apiKey, String body) {}
