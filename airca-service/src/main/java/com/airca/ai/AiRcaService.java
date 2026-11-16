@@ -46,6 +46,7 @@ public class AiRcaService implements AutoCloseable {
     private final Client client;
     private final ObjectMapper objectMapper;
     private final VectorRetrieverService vectorRetrieverService;
+    private final GeminiDecisionGateService decisionGateService;
     private final String model;
 
     @Autowired
@@ -53,8 +54,17 @@ public class AiRcaService implements AutoCloseable {
             ObjectMapper objectMapper,
             VectorRetrieverService vectorRetrieverService,
             @Value("${GEMINI_API_KEY:}") String apiKey,
+            @Value("${airca.ai.chat-model:gemma-4-26b-a4b-it}") String model,
+            @Autowired(required = false) GeminiDecisionGateService decisionGateService) {
+        this(objectMapper, vectorRetrieverService, apiKey, model, DEFAULT_BASE_URL, decisionGateService);
+    }
+
+    public AiRcaService(
+            ObjectMapper objectMapper,
+            VectorRetrieverService vectorRetrieverService,
+            @Value("${GEMINI_API_KEY:}") String apiKey,
             @Value("${airca.ai.chat-model:gemma-4-26b-a4b-it}") String model) {
-        this(objectMapper, vectorRetrieverService, apiKey, model, DEFAULT_BASE_URL);
+        this(objectMapper, vectorRetrieverService, apiKey, model, DEFAULT_BASE_URL, null);
     }
 
     public AiRcaService(
@@ -63,8 +73,19 @@ public class AiRcaService implements AutoCloseable {
             String apiKey,
             String model,
             String baseUrl) {
+        this(objectMapper, vectorRetrieverService, apiKey, model, baseUrl, null);
+    }
+
+    public AiRcaService(
+            ObjectMapper objectMapper,
+            VectorRetrieverService vectorRetrieverService,
+            String apiKey,
+            String model,
+            String baseUrl,
+            GeminiDecisionGateService decisionGateService) {
         this.objectMapper = objectMapper;
         this.vectorRetrieverService = vectorRetrieverService;
+        this.decisionGateService = decisionGateService;
         String normalizedApiKey = apiKey != null ? apiKey.trim() : null;
         this.model = model != null && !model.isBlank() ? model.trim() : DEFAULT_MODEL;
         String base = baseUrl != null && !baseUrl.isBlank() ? baseUrl.trim() : DEFAULT_BASE_URL;
@@ -92,8 +113,38 @@ public class AiRcaService implements AutoCloseable {
             }
         }
 
-        String context = retrieval.context();
         String authoritativeRunbook = resolveAuthoritativeRunbook(retrieval);
+
+        GeminiDecisionGateResult gateResult = null;
+        if (this.decisionGateService != null) {
+            try {
+                gateResult = this.decisionGateService.evaluate(incident, retrieval);
+            } catch (Exception ex) {
+                LOGGER.warn("Gemini decision gate evaluation failed: {}", ex.getMessage());
+            }
+        }
+
+        if (gateResult != null && gateResult.isNoiseGated()) {
+            LOGGER.info("Incident {} gated as IGNORED_NOISE; skipping Gemma 4 generation", incident.getId());
+            return new AiRcaReport(
+                    "IGNORED_NOISE",
+                    NO_MATCHING_COMMIT,
+                    NO_MATCHING_RUNBOOK,
+                    gateResult.calibratedConfidence(),
+                    gateResult.calibratedSeverity(),
+                    "No remediation required (ignored noise).");
+        }
+
+        if (gateResult != null && gateResult.isFastRagOnly()) {
+            LOGGER.info("Incident {} triaged as fast_rag_only; bypassing Gemma 4 generation using existing RAG evidence", incident.getId());
+            return buildFastRagReport(incident, retrieval, gateResult, authoritativeRunbook);
+        }
+
+        boolean includeGitDiff = gateResult == null || gateResult.isIncludeGitDiff();
+        boolean includeRunbooks = gateResult == null || gateResult.isIncludeRunbooks();
+        String context = gateResult != null
+                ? buildGemmaContext(retrieval, includeGitDiff, includeRunbooks)
+                : retrieval.context();
 
         AiRcaReport report;
         if (this.client == null) {
@@ -109,7 +160,7 @@ public class AiRcaService implements AutoCloseable {
                 String prompt = buildPrompt(incident, context);
                 GenerateContentResponse response = this.client.models.generateContent(this.model, prompt, config);
                 LOGGER.info("FULL response : {}", response);
-		if (response == null
+                if (response == null
                         || response.candidates().isEmpty()
                         || response.candidates().get().isEmpty()) {
                     throw new IllegalStateException("AI API returned no candidates");
@@ -127,7 +178,68 @@ public class AiRcaService implements AutoCloseable {
                 report = deterministicReport(incident, context);
             }
         }
-        return report.withMatchedRunbook(authoritativeRunbook);
+
+        String finalSeverity = gateResult != null ? gateResult.calibratedSeverity() : report.severity();
+        int finalConfidence = gateResult != null ? gateResult.calibratedConfidence() : report.confidenceScore();
+
+        return new AiRcaReport(
+                report.rootCauseSummary(),
+                report.suspectedCommit(),
+                authoritativeRunbook,
+                finalConfidence,
+                finalSeverity,
+                report.suggestedRemediation());
+    }
+
+    public static String buildGemmaContext(
+            RetrievalResult retrieval,
+            boolean includeGitDiff,
+            boolean includeRunbooks) {
+        if (retrieval == null) {
+            return "";
+        }
+        StringBuilder context = new StringBuilder();
+        if (includeGitDiff && retrieval.gitDiff() != null && !retrieval.gitDiff().isBlank()) {
+            context.append("Relevant git change:\n").append(retrieval.gitDiff());
+        }
+
+        if (includeRunbooks && retrieval.runbookMatches() != null) {
+            for (VectorRetrieverService.RunbookMatch match : retrieval.runbookMatches()) {
+                if (context.length() > 0) {
+                    context.append("\n\n");
+                }
+                context.append("Vector-matched runbook (similarity ")
+                        .append(String.format(Locale.ROOT, "%.4f", match.similarity()))
+                        .append(", cosine distance ")
+                        .append(String.format(Locale.ROOT, "%.4f", match.distance()))
+                        .append("): ").append(match.runbookName())
+                        .append("\n").append(match.chunkText());
+                if (match.sourcePath() != null && !match.sourcePath().isBlank()) {
+                    context.append("\nSource: ").append(match.sourcePath());
+                }
+                if (includeGitDiff && match.gitDiff() != null && !match.gitDiff().isBlank()) {
+                    context.append("\nRelated change:\n").append(match.gitDiff());
+                }
+            }
+        }
+
+        if (retrieval.pastIncidents() != null) {
+            for (VectorRetrieverService.ResolvedIncidentMatch match : retrieval.pastIncidents()) {
+                if (context.length() > 0) {
+                    context.append("\n\n");
+                }
+                context.append("Previously resolved incident (similarity ")
+                        .append(String.format(Locale.ROOT, "%.4f", match.similarity()))
+                        .append(", cosine distance ")
+                        .append(String.format(Locale.ROOT, "%.4f", match.distance()))
+                        .append("): ")
+                        .append(match.serviceName())
+                        .append(" (occurrences: ").append(match.occurrenceCount())
+                        .append(", resolved activity last seen: ").append(match.lastSeen()).append(")")
+                        .append("\n").append(match.stackTrace());
+            }
+        }
+        return context.toString();
     }
 
     private static String resolveAuthoritativeRunbook(RetrievalResult retrieval) {
@@ -135,6 +247,40 @@ public class AiRcaService implements AutoCloseable {
             return NO_MATCHING_RUNBOOK;
         }
         return retrieval.topRunbookName().orElse(NO_MATCHING_RUNBOOK);
+    }
+
+    private static AiRcaReport buildFastRagReport(
+            Incident incident,
+            RetrievalResult retrieval,
+            GeminiDecisionGateResult gateResult,
+            String authoritativeRunbook) {
+        String context = retrieval != null ? retrieval.context() : "";
+        AiRcaReport base = deterministicReport(incident, context);
+
+        String summary = base.rootCauseSummary();
+        String suspectedCommit = base.suspectedCommit();
+        String remediation = base.suggestedRemediation();
+
+        if (retrieval != null && retrieval.topRunbookMatch().isPresent()) {
+            VectorRetrieverService.RunbookMatch topMatch = retrieval.topRunbookMatch().get();
+            String chunk = topMatch.chunkText();
+            if (chunk != null && !chunk.isBlank()) {
+                if (summary == null || summary.isBlank() || summary.startsWith("The trace identifies a recurring failure")) {
+                    summary = "Fast RAG match from " + topMatch.runbookName() + ": " + chunk.lines().findFirst().orElse(chunk);
+                }
+            }
+        }
+
+        String severity = gateResult != null ? gateResult.calibratedSeverity() : base.severity();
+        int confidence = gateResult != null ? gateResult.calibratedConfidence() : base.confidenceScore();
+
+        return new AiRcaReport(
+                summary,
+                suspectedCommit,
+                authoritativeRunbook,
+                confidence,
+                severity,
+                remediation);
     }
 
     private String buildPrompt(Incident incident, String context) {

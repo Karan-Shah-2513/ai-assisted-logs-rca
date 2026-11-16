@@ -15,16 +15,20 @@ import com.airca.ai.AiRcaService;
 import com.airca.ai.TextEmbeddingService;
 import com.airca.deduplication.RedisDeduplicatorService;
 import com.airca.dto.AiRcaReport;
+import com.airca.dto.IncidentDto;
+import com.airca.dto.TelemetryDto;
 import com.airca.model.Incident;
 import com.airca.model.IncidentStatus;
 import com.airca.repository.IncidentRepository;
 import com.airca.websocket.StompBroadcasterService;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import org.mockito.ArgumentCaptor;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -196,5 +200,67 @@ class LogIngestionProcessorTest {
 
         assertTrue(ex.getMessage().contains("Gemini embedding API error"));
         verify(incidentRepository, never()).upsertIngestedIncident(any(), any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void broadcastPayloadIncludesDecisionGateJsonAndDecisionTelemetry() throws Exception {
+        String rawTrace = "java.lang.IllegalStateException: connection dropped";
+        String sanitizedTrace = "java.lang.IllegalStateException: connection dropped";
+        String fingerprint = "gate123";
+        LogMessage message = new LogMessage(tenantId, "checkout-service", rawTrace, "corr-gate", Instant.now());
+
+        when(sanitizer.sanitize(rawTrace)).thenReturn(sanitizedTrace);
+        when(deduplicatorService.fingerprint(rawTrace)).thenReturn(fingerprint);
+        when(deduplicatorService.record(tenantId.toString(), fingerprint))
+                .thenReturn(new RedisDeduplicatorService.DeduplicationResult(fingerprint, 1, 0, 10));
+
+        JsonNode decisionNode = objectMapper.readTree("""
+                {
+                    "status": "PROCEED",
+                    "triageRoute": "fast_rag_only",
+                    "decisionLatencyMs": 85,
+                    "calibratedSeverity": "P1"
+                }
+                """);
+
+        Incident persistedIncident = new Incident();
+        persistedIncident.setId(UUID.randomUUID());
+        persistedIncident.setTenantId(tenantId);
+        persistedIncident.setFingerprintHash(fingerprint);
+        persistedIncident.setServiceName("checkout-service");
+        persistedIncident.setRawStackTrace(rawTrace);
+        persistedIncident.setSanitizedStackTrace(sanitizedTrace);
+        persistedIncident.setOccurrenceCount(1);
+        persistedIncident.setStatus(IncidentStatus.OPEN);
+        persistedIncident.setFirstSeen(Instant.now());
+        persistedIncident.setLastSeen(Instant.now());
+        persistedIncident.setDecisionGateJson(decisionNode);
+
+        when(incidentRepository.findByTenantIdAndFingerprintHash(tenantId, fingerprint))
+                .thenReturn(Optional.of(persistedIncident));
+        when(incidentRepository.countByTenantId(tenantId)).thenReturn(3L);
+        when(incidentRepository.countDecisionsByTenantId(tenantId)).thenReturn(2L);
+        when(incidentRepository.findAverageDecisionLatencyMsByTenantId(tenantId)).thenReturn(85.0);
+        when(deduplicatorService.getDecisionGatedLogs(tenantId.toString())).thenReturn(1L);
+
+        when(aiRcaService.analyze(any())).thenReturn(new AiRcaReport(
+                "Root cause", "commitX", "runbookY", 88, "P1", "remediationZ"));
+        when(incidentRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+        processor.process(message);
+
+        ArgumentCaptor<IncidentDto> incidentCaptor = ArgumentCaptor.forClass(IncidentDto.class);
+        verify(broadcasterService).broadcastIncident(incidentCaptor.capture());
+        IncidentDto broadcastIncident = incidentCaptor.getValue();
+        assertEquals(persistedIncident.getId(), broadcastIncident.id());
+        assertEquals(decisionNode, broadcastIncident.decisionGateJson(), "Broadcasted IncidentDto must contain decisionGateJson");
+
+        ArgumentCaptor<TelemetryDto> telemetryCaptor = ArgumentCaptor.forClass(TelemetryDto.class);
+        verify(broadcasterService).broadcastTelemetry(telemetryCaptor.capture());
+        TelemetryDto broadcastTelemetry = telemetryCaptor.getValue();
+        assertEquals(tenantId, broadcastTelemetry.tenantId());
+        assertEquals(1L, broadcastTelemetry.decisionGatedLogs(), "Telemetry broadcast must include noise-gated count");
+        assertEquals(2L, broadcastTelemetry.totalDecisions(), "Telemetry broadcast must include total decision evaluations");
+        assertEquals(85.0, broadcastTelemetry.averageDecisionLatencyMs(), 0.001, "Telemetry broadcast must include average decision latency");
     }
 }

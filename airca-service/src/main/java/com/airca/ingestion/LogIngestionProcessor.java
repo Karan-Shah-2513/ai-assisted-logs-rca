@@ -88,11 +88,48 @@ public class LogIngestionProcessor {
         }
 
         IncidentDto incidentDto = toDto(incident);
+
+        long decisionGatedLogs = 0L;
+        try {
+            decisionGatedLogs = deduplicatorService.getDecisionGatedLogs(tenantId.toString());
+        } catch (Exception ignored) {
+        }
+
+        long totalDecisions = 0L;
+        try {
+            totalDecisions = incidentRepository.countDecisionsByTenantId(tenantId);
+        } catch (Exception ignored) {
+        }
+        if (totalDecisions == 0L) {
+            try {
+                totalDecisions = deduplicatorService.getDecisionEvaluatedCount(tenantId.toString());
+            } catch (Exception ignored) {
+            }
+        }
+
+        double averageLatencyMs = 0.0;
+        try {
+            Double dbAvg = incidentRepository.findAverageDecisionLatencyMsByTenantId(tenantId);
+            if (dbAvg != null && dbAvg > 0.0) {
+                averageLatencyMs = dbAvg;
+            }
+        } catch (Exception ignored) {
+        }
+        if (averageLatencyMs == 0.0) {
+            try {
+                averageLatencyMs = deduplicatorService.getAverageDecisionLatencyMs(tenantId.toString());
+            } catch (Exception ignored) {
+            }
+        }
+
         TelemetryDto telemetry = TelemetryService.create(
                 tenantId,
                 deduplication.totalLogs(),
                 deduplication.deduplicatedLogs(),
-                incidentRepository.countByTenantId(tenantId));
+                incidentRepository.countByTenantId(tenantId),
+                decisionGatedLogs,
+                totalDecisions,
+                averageLatencyMs);
         publishAfterCommit(incidentDto, telemetry);
     }
 
@@ -125,6 +162,7 @@ public class LogIngestionProcessor {
                 incident.getStatus(),
                 incident.getAiRcaJson(),
                 incident.getFirstSeen(),
-                incident.getLastSeen());
+                incident.getLastSeen(),
+                incident.getDecisionGateJson());
     }
 }

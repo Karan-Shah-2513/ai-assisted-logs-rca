@@ -28,7 +28,8 @@ class LiquibaseChangelogVerificationTest {
                 "003-migrate-vector-768",
                 "004-add-runbook-chunk-source-and-incident",
                 "005-preserve-runbook-chunk-on-incident-delete",
-                "006-enforce-app-role-rls"
+                "006-enforce-app-role-rls",
+                "007-add-incident-decision-gate-json"
         );
 
         for (String changeSetId : expectedChangeSets) {
@@ -99,6 +100,25 @@ class LiquibaseChangelogVerificationTest {
     }
 
     @Test
+    void migration007AddsDecisionGateJsonColumn() throws Exception {
+        ClassPathResource res007 = new ClassPathResource("db/changelog/007-add-incident-decision-gate-json.sql");
+        assertTrue(res007.exists(), "007-add-incident-decision-gate-json.sql must exist");
+
+        String sql007;
+        try (InputStream is = res007.getInputStream()) {
+            sql007 = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        String sqlWithoutComments = sql007.replaceAll("--.*", "");
+        assertTrue(sqlWithoutComments.contains("decision_gate_json"),
+                "Migration 007 must add decision_gate_json column");
+        assertTrue(sqlWithoutComments.toUpperCase().contains("JSONB"),
+                "Migration 007 must specify JSONB column type");
+        assertTrue(sqlWithoutComments.contains("incidents"),
+                "Migration 007 must target incidents table");
+    }
+
+    @Test
     void allChangelogSqlFilesArePresentOnClasspath() {
         List<String> sqlFiles = List.of(
                 "db/changelog/001-init-pgvector.sql",
@@ -106,7 +126,8 @@ class LiquibaseChangelogVerificationTest {
                 "db/changelog/003-migrate-vector-768.sql",
                 "db/changelog/004-add-runbook-chunk-source-and-incident.sql",
                 "db/changelog/005-preserve-runbook-chunk-on-incident-delete.sql",
-                "db/changelog/006-enforce-app-role-rls.sql"
+                "db/changelog/006-enforce-app-role-rls.sql",
+                "db/changelog/007-add-incident-decision-gate-json.sql"
         );
 
         for (String path : sqlFiles) {

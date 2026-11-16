@@ -534,4 +534,52 @@ class StompTenantAuthChannelInterceptorTest {
         broadcasterService.broadcastTelemetry(telemetry);
         verify(templateMock).convertAndSend("/topic/tenant/" + alphaFinId + "/telemetry", telemetry);
     }
+
+    @Test
+    @DisplayName("Broadcast IncidentDto with decisionGateJson and TelemetryDto with decision metrics")
+    void testServerSideBroadcastsWithDecisionGatePayloadPreserved() {
+        SimpMessagingTemplate templateMock = mock(SimpMessagingTemplate.class);
+        StompBroadcasterService broadcasterService = new StompBroadcasterService(templateMock);
+
+        com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+        com.fasterxml.jackson.databind.node.ObjectNode decisionGateNode = mapper.createObjectNode();
+        decisionGateNode.put("status", "PROCEED");
+        decisionGateNode.put("triageRoute", "deep_gemma4_rca");
+        decisionGateNode.put("calibratedSeverity", "P0");
+        decisionGateNode.put("calibratedConfidence", 94);
+        decisionGateNode.put("decisionLatencyMs", 110L);
+
+        IncidentDto incident = new IncidentDto(
+                UUID.randomUUID(),
+                alphaFinId,
+                "fingerprint-gate-456",
+                "OrderService",
+                "SQLException: Deadlock",
+                "SQLException: Deadlock",
+                1L,
+                IncidentStatus.OPEN,
+                null,
+                Instant.now(),
+                Instant.now(),
+                decisionGateNode
+        );
+
+        TelemetryDto telemetry = new TelemetryDto(
+                alphaFinId,
+                1500L,
+                600L,
+                15L,
+                40.0,
+                9.0,
+                5L,     // decisionGatedLogs
+                20L,    // totalDecisions
+                110.5   // averageDecisionLatencyMs
+        );
+
+        broadcasterService.broadcastIncident(incident);
+        verify(templateMock).convertAndSend("/topic/tenant/" + alphaFinId + "/incidents", incident);
+
+        broadcasterService.broadcastTelemetry(telemetry);
+        verify(templateMock).convertAndSend("/topic/tenant/" + alphaFinId + "/telemetry", telemetry);
+    }
 }

@@ -1,5 +1,10 @@
-import { AlertCircle, CheckCircle2, Clock, Hash, Layers, RefreshCw, Sparkles } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Clock, Hash, Layers, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react'
 import type { Incident, IncidentStatus, Severity } from '../types'
+import {
+  formatSeverityBadge,
+  getDecisionRoute,
+  getRemediationSafety,
+} from '../decision-gate'
 
 interface IncidentTableProps {
   incidents: Incident[]
@@ -11,21 +16,48 @@ interface IncidentTableProps {
   onSelectIncident?: (incident: Incident) => void
 }
 
-function SeverityBadge({ severity }: { severity?: Severity | null }) {
+export function SeverityBadge({
+  severity,
+  confidence,
+}: {
+  severity?: Severity | string | null
+  confidence?: number | null
+}) {
   if (!severity) return null
+  const displayLabel = formatSeverityBadge(severity, confidence)
+
   return (
     <span className={`severity-pill severity-${severity.toLowerCase()}`}>
       <i aria-hidden="true" />
-      {severity}
+      {displayLabel}
     </span>
   )
 }
 
-function StatusBadge({ status }: { status: IncidentStatus }) {
+export function StatusBadge({ status }: { status: IncidentStatus }) {
   return (
     <span className={`status-pill status-${status.toLowerCase()}`}>
       <i aria-hidden="true" />
       {status.toLowerCase()}
+    </span>
+  )
+}
+
+export function RouteBadge({ route }: { route: string }) {
+  const normalizedRoute = route.trim().toLowerCase()
+  return (
+    <span className={`route-pill route-${normalizedRoute}`} title={`Decision triage route: ${route}`}>
+      {route}
+    </span>
+  )
+}
+
+export function SafetyBadge({ safety }: { safety: string }) {
+  const normalizedSafety = safety.trim().toLowerCase()
+  return (
+    <span className={`safety-pill safety-${normalizedSafety}`} title={`Remediation safety: ${safety}`}>
+      <i aria-hidden="true" />
+      {safety}
     </span>
   )
 }
@@ -133,11 +165,14 @@ export function IncidentTable({
             <th scope="col" style={{ width: '150px' }}>
               <span className="th-content"><Layers size={11} /> Service</span>
             </th>
-            <th scope="col" style={{ width: '120px' }}>Status</th>
-            <th scope="col" style={{ width: '110px' }}>
+            <th scope="col" style={{ width: '110px' }}>Status</th>
+            <th scope="col" style={{ width: '180px' }}>
+              <span className="th-content"><ShieldCheck size={11} /> Decision Route & Safety</span>
+            </th>
+            <th scope="col" style={{ width: '100px' }}>
               <span className="th-content"><Hash size={11} /> Occurrences</span>
             </th>
-            <th scope="col" style={{ width: '110px' }}>
+            <th scope="col" style={{ width: '100px' }}>
               <span className="th-content"><Clock size={11} /> Last Seen</span>
             </th>
             <th scope="col">Error / Summary</th>
@@ -153,6 +188,17 @@ export function IncidentTable({
             const fullTime = formatFullTime(incident.lastSeen)
             const relativeTime = formatRelativeTime(incident.lastSeen)
             const isSelected = selectedIncidentId === incident.id
+
+            const gate = incident.decisionGateJson
+            const effectiveSeverity = gate?.calibratedSeverity || incident.aiRcaJson?.severity
+            const effectiveConfidence =
+              gate?.calibratedConfidence != null
+                ? gate.calibratedConfidence
+                : incident.aiRcaJson?.confidenceScore != null
+                ? incident.aiRcaJson.confidenceScore
+                : null
+            const route = getDecisionRoute(incident)
+            const safety = getRemediationSafety(incident)
 
             return (
               <tr
@@ -172,11 +218,18 @@ export function IncidentTable({
                 <td className="service-cell">
                   <div className="service-name-wrap">
                     <span className="service-tag">{incident.serviceName}</span>
-                    <SeverityBadge severity={incident.aiRcaJson?.severity} />
+                    <SeverityBadge severity={effectiveSeverity} confidence={effectiveConfidence} />
                   </div>
                 </td>
                 <td className="status-cell">
                   <StatusBadge status={incident.status} />
+                </td>
+                <td className="route-safety-cell">
+                  <div className="route-safety-group">
+                    {route && <RouteBadge route={route} />}
+                    {safety && <SafetyBadge safety={safety} />}
+                    {!route && !safety && <span className="route-placeholder">—</span>}
+                  </div>
                 </td>
                 <td className="occurrence-cell">
                   <span className="occurrence-badge">

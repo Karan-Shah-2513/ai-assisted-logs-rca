@@ -14,7 +14,8 @@ The system provides multi-tenant incident triage and automated Root-Cause Analys
    - HTTP gateway with API key authentication and tenant isolation (`TenantFilter`).
    - Apache Kafka topic (`raw-error-logs`) buffer.
    - Deterministic regex sanitizer and SHA-256 fingerprint deduplication with Redis 7.
-   - Retrieval-Augmented Generation (RAG) using PostgreSQL 16 + `pgvector` (768-dimensional cosine similarity), with vectors generated through the official Google GenAI Java SDK and used to match historical incidents, Git commits, and operational runbooks.
+   - Retrieval-Augmented Generation (RAG) using PostgreSQL 16 + `pgvector` (768-dimensional cosine similarity), with vectors generated through the official Google GenAI Java SDK (`gemini-embedding-2`) and used to match historical incidents, Git commits, and operational runbooks.
+   - System 1 Calibrated Decision Gate (`gemini-decision-1`) operating before full LLM generation: evaluates actionability, noise gating, triage routing (`deep_gemma4_rca`, `fast_rag_only`, `skip_llm_noise`), evidence filtering (< 0.40 threshold), calibrated severity/confidence, and remediation safety.
    - Hosted Gemma 4 root-cause analysis via the official Google GenAI Java SDK (`client.models.generateContent`), reusing the same `GEMINI_API_KEY` with configurable model ID (default `gemma-4-26b-a4b-it`, also supporting `gemma-4-31b-it`), authoritative RAG runbook match preservation (guaranteeing that top qualifying vector runbook matches are preserved directly in reports, independent of model output), and a deterministic fallback when no API key is configured or a generation request fails.
    - STOMP over SockJS WebSocket broker with tenant-scoped destination authorization (`/ws`).
    - PostgreSQL Row-Level Security (RLS) with dedicated unprivileged `airca_app` role (`NOBYPASSRLS`).
@@ -76,7 +77,11 @@ docker compose up --build -d
 ```
 
 *(If images are already built, you can omit `--build`: `docker compose up -d`)*
-All tenant microservices (`order-service`, `ledger-service`, `auth-service`, `wallet-service`) and central `airca-service` build directly via multi-stage Docker builds from the Maven reactor; no manual pre-building of `target/*.jar` on the host machine is required.
+> [!TIP]
+> Dockerfiles directly package pre-built JARs (`target/*.jar`) on the lightweight JRE Alpine image for lightning-fast container builds (~1-2s). If you need to rebuild the JARs from source on the host first, run:
+> ```bash
+> mvn -f airca-service/pom.xml clean package -DskipTests && mvn -f tenants/pom.xml clean package -DskipTests
+> ```
 The service uses `GEMINI_API_KEY` for both vector embeddings (via `gemini-embedding-2`) and hosted Gemma 4 RCA generation (defaulting to `gemma-4-26b-a4b-it`, configurable via `AIRCA_AI_CHAT_MODEL`). Do not commit real keys to the repository. Without `GEMINI_API_KEY`, first-occurrence log ingestion fails during embedding generation, while RCA falls back to high-fidelity deterministic local analysis.
 
 ### Step 2: Verify Readiness & Container Health
@@ -192,7 +197,7 @@ The tenant microservices contain deliberate, reproducible bugs designed to exerc
 
 ---
 
-## 8. Expected HTTP 500 Behavior & Asynchronous Pipeline Pipeline Caveat
+## 8. Expected HTTP 500 Behavior & Asynchronous Pipeline Caveat
 
 ### How Error Reporting Works
 When an intentional defect endpoint is called:
@@ -219,9 +224,10 @@ When an intentional defect endpoint is called:
 >   2. The log message is published to Kafka topic `raw-error-logs`.
 >   3. The Kafka consumer processes the log, normalizes dynamic values (UUIDs, timestamps, hex pointers), and checks Redis for deduplication.
 >   4. If it is the **first occurrence**, Airca requires `GEMINI_API_KEY` to generate 768-dimensional embeddings via `gemini-embedding-2` through the official Google GenAI SDK, then queries `pgvector` for similar runbooks (cosine threshold 0.72) and inspects recent Git diffs. The top qualifying runbook match from vector retrieval is locked in as the authoritative runbook for the incident. Without the Gemini key, embedding generation throws and the incident is not fully processed; configure the key before generating demo logs, and check Airca logs if a trigger does not appear on the dashboard.
->   5. RCA invokes hosted Gemma 4 generation (`gemma-4-26b-a4b-it` or `gemma-4-31b-it`) via the official Google GenAI SDK using `GEMINI_API_KEY` (temperature 0.1, structured JSON output mode). If the key is missing or model generation fails/times out, it automatically falls back to deterministic local analysis. The authoritative RAG runbook resolved in Step 4 is preserved on the final `AiRcaReport` and displayed in the UI, independent of model generation.
->   6. If it is a **subsequent occurrence**, Redis increments the occurrence counter in PostgreSQL without invoking the chat model, saving over 99% in token costs.
->   7. The frontend receives the event via STOMP WebSocket and updates the UI live.
+>   5. **System 1 Calibrated Decision Gate (`gemini-decision-1`):** The decision gate evaluates actionability, noise gating, triage routing (`deep_gemma4_rca`, `fast_rag_only`, `skip_llm_noise`), evidence filtering (< 0.40 threshold for Git diff and runbook context), calibrated severity/confidence, and remediation safety. If noise-gated (`IGNORED_NOISE`), Gemma 4 generation is skipped entirely. If `fast_rag_only`, the incident is resolved directly from the authoritative RAG runbook match.
+>   6. **System 2 Hosted Gemma 4 RCA:** If routed to `deep_gemma4_rca`, RCA invokes hosted Gemma 4 generation (`gemma-4-26b-a4b-it` or `gemma-4-31b-it`) via the official Google GenAI SDK using `GEMINI_API_KEY` (temperature 0.1, structured JSON output mode). If the key is missing or model generation fails/times out, it automatically falls back to deterministic local analysis. The authoritative RAG runbook resolved in Step 4 is preserved on the final `AiRcaReport` and displayed in the UI, independent of model generation.
+>   7. If it is a **subsequent occurrence**, Redis increments the occurrence counter in PostgreSQL without invoking either the decision gate or the chat model, saving over 99% in token costs.
+>   8. The frontend receives the event via STOMP WebSocket and updates the UI live with calibrated badges, telemetry KPI cards, and guardrail UI affordances.
 > - **Caveat:** There is a brief propagation window (typically 100–500ms) between the microservice returning HTTP 500 and the incident appearing or updating on the frontend AG-Grid.
 
 ---
@@ -342,11 +348,11 @@ curl -i -X POST http://localhost:8080/api/v1/simulate-outage \
 
 1. In the frontend dashboard, click on any incident row in the AG-Grid table.
 2. The **RCA Inspector Drawer** slides out from the right:
-   - **Section 01 (Root Cause Analysis):** Displays the root cause diagnosis and a confidence score progress bar. RCA uses the configured Gemma 4 model or deterministic fallback, with retrieved evidence from pgvector.
-   - **Section 02 (Suspected Introducing Commit):** Highlights the suspect Git commit SHA, author, and interactive syntax-highlighted diff (rendered by `DiffViewer.tsx`).
-   - **Section 03 (Matched Operational Runbook):** Shows the pgvector-retrieved runbook playbook chunk (authoritatively resolved from vector similarity search and preserved independent of LLM output).
-   - **Section 04 (Suggested Remediation):** Provides the actionable remediation command with a single-click copy button (e.g. `kubectl rollout undo deployment/...`).
-   - **Section 05 (Failure Signature):** Displays the sanitized exception stack trace.
+   - **Section 02 (Root Cause Analysis):** Displays the root cause diagnosis and a confidence score progress bar. RCA uses the configured Gemma 4 model or deterministic fallback, with retrieved evidence from pgvector.
+   - **Section 03 (Suspected Introducing Commit):** Highlights the suspect Git commit SHA, author, and interactive syntax-highlighted diff (rendered by `DiffViewer.tsx`).
+   - **Section 04 (Matched Operational Runbook):** Shows the pgvector-retrieved runbook playbook chunk (authoritatively resolved from vector similarity search and preserved independent of LLM output).
+   - **Section 05 (Suggested Remediation):** Provides the actionable remediation command with a single-click copy button (e.g. `kubectl rollout undo deployment/...`).
+   - **Section 06 (Failure Signature):** Displays the sanitized exception stack trace.
 
 ---
 
@@ -355,7 +361,7 @@ curl -i -X POST http://localhost:8080/api/v1/simulate-outage \
 Once an engineer verifies the fix, they resolve the incident. This indexes the verified root cause and fix command into `pgvector` so future similar incidents retrieve it automatically:
 
 #### Resolving via Frontend UI
-1. Scroll to **Section 06 (Human-Verified Resolution)** in the open RCA Drawer.
+1. Scroll to **Section 07 (Human-Verified Resolution)** in the open RCA Drawer.
 2. Click **"Use AI Summary"** or **"Use AI Remediation"** to pre-fill the form, or type custom verified details.
 3. Fill in:
    - **Verified Root Cause:** e.g., `Connection pool exhaustion caused by unclosed statement in batch loop.` (required; maximum 4,000 characters)
@@ -417,7 +423,229 @@ Expected Response:
 
 ---
 
-## 10. Complete Working curl Cheat Sheet
+## 10. AI Triad: System 1 Decision Gate (`gemini-decision-1`), System 2 (`Gemma 4`), and Embeddings (`gemini-embedding-2`)
+
+The platform implements a multi-model AI triad designed to minimize LLM token consumption, avoid hallucination, filter out transient noise, and provide calibrated operational guardrails before remediation actions.
+
+```text
+Raw Error Log Ingestion (HTTP / Kafka)
+                 │
+                 ▼
+     Redis Fingerprint Deduplication
+      ├── [Subsequent Occurrence] ──> Increment counter in DB (0 LLM / 0 Decision tokens)
+      └── [First Occurrence]
+                 │
+                 ▼
+[1] gemini-embedding-2 (Semantic RAG Retrieval via Google GenAI SDK)
+    • Model: gemini-embedding-2 (768-dimensional float vectors)
+    • Retrieval: pgvector cosine similarity search (threshold: 0.72)
+    • Resolves: Authoritative Runbook match + relevant Git diffs
+                 │
+                 ▼
+[2] gemini-decision-1 (System 1 Calibrated Gate via Spring HTTP/Jackson)
+    • Zero-output-token decision gate (evaluated once per unique incident)
+    • Structured questions: is_actionable, triage_route, commit_caused_bug,
+                            runbook_applies, severity_score, remediation_safety
+    • Prunes weak evidence (< 0.40 probability)
+    • Calibrates severity (3->P0, 2->P1, 1->P2, 0->P3) and confidence
+                 │
+   ┌─────────────┼────────────────────────┐
+   │             │                        │
+   ▼             ▼                        ▼
+[skip_llm_noise] [fast_rag_only]          [deep_gemma4_rca]
+• Gated as       • Fast RCA synthesized   • Filters out weak diff/runbook
+  IGNORED_NOISE    from authoritative RAG • Hosted Gemma 4 generation
+• decisionGated    runbook match            (gemma-4-26b-a4b-it / 31b-it)
+  Logs increment • Gemma 4 bypassed       • Preserves authoritative runbook
+• Gemma 4        • 0 generative tokens    • Calibrated severity/confidence
+  bypassed
+   │             │                        │
+   └─────────────┴────────────────────────┘
+                 │
+                 ▼
+   WebSocket Broadcast & Dark-Mode Dashboard
+   • KPI Card: "Decision-Gated / Auto-Triaged" count & measured decision latency
+   • AG-Grid Table: Calibrated Severity Badge & Route/Safety badges
+   • RCA Drawer: System 1 Card with Guardrail Auto-Rollback affordance & approval locks
+```
+
+### 10.1 Triad Roles & End-to-End Orchestration Flow
+
+1. **`gemini-embedding-2` (Vector Retrieval & Semantic Indexing):**
+   - **Role:** Generates 768-dimensional float vectors from normalized error messages and stack traces using the official Google GenAI Java SDK (`TextEmbeddingService`).
+   - **Execution:** Invoked strictly on the **first occurrence** of a unique incident fingerprint.
+   - **RAG Integration:** Queries PostgreSQL 16 + `pgvector` for operational runbooks (`runbook_chunks`) exceeding the 0.72 cosine similarity threshold, as well as past human-verified resolutions. The top qualifying runbook match is locked in as the **authoritative runbook** for the incident.
+2. **`gemini-decision-1` (System 1 Calibrated Decision Gate):**
+   - **Role:** Fast, structured decision gate operating prior to full LLM generation ([`GeminiDecisionGateService.java`](file:///home/karan/projects/ai-assisted-logs-rca/airca-service/src/main/java/com/airca/ai/GeminiDecisionGateService.java)). It evaluates the incident against 6 structured questions (Noul binary probability, Choice, and Score).
+   - **Execution:** Invoked once per unique incident fingerprint; results are cached and persisted directly on the incident entity ([`incidents.decision_gate_json`](file:///home/karan/projects/ai-assisted-logs-rca/airca-service/src/main/resources/db/changelog/007-add-incident-decision-gate-json.sql)).
+   - **Capabilities:** Performs noise suppression, resolves triage routes (`deep_gemma4_rca`, `fast_rag_only`, `skip_llm_noise`), prunes weak Git diffs and runbooks (< 0.40 threshold), calculates calibrated severity and confidence, and classifies operational remediation safety.
+3. **Hosted `Gemma 4` (System 2 Deep Root Cause Analysis):**
+   - **Role:** High-capacity reasoning model (`gemma-4-26b-a4b-it` or `gemma-4-31b-it`) invoked via the Google GenAI Java SDK ([`AiRcaService.java`](file:///home/karan/projects/ai-assisted-logs-rca/airca-service/src/main/java/com/airca/ai/AiRcaService.java)) only when deep analysis is needed (`deep_gemma4_rca`).
+   - **Execution:** Receives filtered evidence (excluding diffs or runbooks judged irrelevant by System 1). Generates structured JSON containing `rootCauseSummary`, `suspectedCommit`, and `suggestedRemediation`.
+   - **Authoritative Preservation:** The top qualifying RAG runbook resolved in Step 1 is locked in as the authoritative runbook on the final `AiRcaReport`, independent of model generation.
+
+---
+
+### 10.2 Decisions API Client Architecture & Shared Credentials
+
+- **Spring HTTP / Jackson Client Rationale:**
+  - The project's current official Google GenAI Java SDK artifact (`com.google.genai:google-genai` version `1.0.0`) currently lacks direct Gemini Decisions API client methods (it only exposes generative content and embedding utilities).
+  - To support the official v1beta Decisions API without waiting for future SDK releases or adding heavyweight dependencies, [`GeminiDecisionClient.java`](file:///home/karan/projects/ai-assisted-logs-rca/airca-service/src/main/java/com/airca/ai/GeminiDecisionClient.java) calls the official Google Generative Language v1beta REST endpoint (`POST https://generativelanguage.googleapis.com/v1beta/decisions`) using Spring Boot's modern `RestClient` with `SimpleClientHttpRequestFactory` and Jackson `ObjectMapper`.
+- **Shared `GEMINI_API_KEY`:**
+  - A single `GEMINI_API_KEY` environment variable powers all three models in the triad:
+    - `gemini-embedding-2` via the Google GenAI SDK.
+    - `gemini-decision-1` via the Decisions REST API (`x-goog-api-key: ${GEMINI_API_KEY}`).
+    - Hosted Gemma 4 (`gemma-4-26b-a4b-it`) via the Google GenAI SDK.
+  - No separate API keys or external services are needed. Do not commit or hardcode keys in files or logs.
+- **Resilient Deterministic Offline Fallback:**
+  - If `GEMINI_API_KEY` is not configured, is blank, or is set to a dummy placeholder (`dummy`, `placeholder`, `none`, `null`), or if the Decisions API encounters network failure, rate limiting, or timeouts:
+    - `GeminiDecisionClient` executes local deterministic rule-based evaluation (`deterministicFallback`).
+    - It evaluates log signatures, error keywords, and stack trace patterns against the question criteria to generate calibrated probabilities and fallback answers.
+    - This ensures 100% platform availability and allows local offline testing without throwing HTTP 500 errors.
+
+---
+
+### 10.3 Calibrated Decision Gate Logic & Routing Rules
+
+The System 1 gate evaluates 6 structured questions defined in [`GeminiDecisionGateService.java`](file:///home/karan/projects/ai-assisted-logs-rca/airca-service/src/main/java/com/airca/ai/GeminiDecisionGateService.java):
+
+| Question ID | Type | Description & Criteria |
+| :--- | :--- | :--- |
+| `is_actionable` | Noul | Binary probability whether the log indicates an actionable production failure vs benign/transient noise. |
+| `triage_route` | Choice | Selects triage path: `deep_gemma4_rca`, `fast_rag_only`, or `skip_llm_noise`. |
+| `commit_caused_bug` | Noul | Binary probability whether a recent Git commit or code change introduced the bug. |
+| `runbook_applies` | Noul | Binary probability whether the retrieved vector runbook chunk directly applies to the incident. |
+| `severity_score` | Score (0–3) | Rating from 0 (P3 Minor) to 3 (P0 Outage/Critical). |
+| `remediation_safety` | Choice | Evaluates remediation safety: `safe_auto_rollback`, `requires_human_approval`, or `escalate_dba_finance`. |
+
+#### Noise Gate Threshold
+An incident is classified as **`IGNORED_NOISE`** when:
+$$\text{is\_actionable.noul} < 0.25 \quad \text{AND} \quad \text{is\_actionable.confidence} \ge 0.80$$
+$$\text{OR} \quad \text{triage\_route.choice} == \text{"skip\_llm\_noise"}$$
+- **Action:** Increments the tenant's `decisionGatedLogs` telemetry counter, sets the incident status to `IGNORED_NOISE`, outputs `"No remediation required (ignored noise)"`, and completely bypasses System 2 Gemma 4 generation (0 generative tokens consumed).
+
+#### Triage Routes
+1. **`skip_llm_noise`:** Triggered when the incident is identified as benign or transient noise. Gemma 4 is bypassed entirely.
+2. **`fast_rag_only`:** Triggered when vector-matched runbook evidence is strong and unambiguous. System 2 Gemma 4 generation is bypassed; the system immediately builds the RCA report directly from the top qualifying vector runbook match, saving latency and token costs.
+3. **`deep_gemma4_rca`:** Standard route for actionable failures requiring deep generative investigation. Evidence is filtered and passed to hosted Gemma 4.
+
+#### Evidence Filtering Thresholds
+To prevent the LLM from hallucinating or becoming confused by irrelevant code changes or weak documentation:
+- **Git Diff Threshold:** If `commit_caused_bug.noul < 0.40`, the recent Git diff is pruned from the Gemma 4 prompt context (`gitDiffIncluded: false`).
+- **Runbook Threshold:** If `runbook_applies.noul < 0.40`, weak runbook chunks are omitted from the Gemma 4 prompt context (`runbookContextIncluded: false`).
+
+#### Calibrated Severity & Confidence Mapping
+- **Severity Level:** Mapped from the highest probability level in `severity_score`:
+  - Score Level `3` $\rightarrow$ **`P0`** (Critical outage / core transaction failure)
+  - Score Level `2` $\rightarrow$ **`P1`** (High severity customer-impacting error)
+  - Score Level `1` $\rightarrow$ **`P2`** (Moderate non-critical error)
+  - Score Level `0` $\rightarrow$ **`P3`** (Minor issue or background warning)
+- **Calibrated Confidence:** Formatted as $\text{round}(\text{severity\_confidence} \times 100)$ (e.g. `98% conf`).
+- This calibrated value is persisted on `incidents.decision_gate_json` and displayed directly in UI badges (e.g., `P0 (98% conf)`).
+
+---
+
+### 10.4 Telemetry Metrics & Measured Decision Latency
+
+The system tracks real-time Decision Gate metrics per tenant, exposed via `GET /api/v1/telemetry` and live WebSocket STOMP updates:
+
+- **`totalDecisions`:** The cumulative count of unique incidents evaluated by the decision gate.
+- **`averageDecisionLatencyMs`:** The rolling average execution latency of the decision gate in milliseconds.
+- **`decisionGatedLogs`:** The total number of noise logs intercepted and suppressed by the gate.
+
+#### Dashboard KPI Card: "Decision-Gated / Auto-Triaged"
+On the frontend dashboard, the fifth KPI card displays:
+- **Card Title:** `Decision-Gated / Auto-Triaged`
+- **Value:** Formatted count of `totalDecisions` (e.g. `1`, `42`).
+- **Footer Note:** Measured latency in milliseconds: `${Math.round(averageDecisionLatencyMs)}ms decision latency`.
+
+> [!NOTE]
+> **Understanding Displayed Decision Latency:**
+> The dashboard displays the **actual measured execution latency** recorded during the Decision Gate invocation (`System.nanoTime()` measured across the HTTP REST call to Google's Decisions API or local deterministic fallback). While Decisions API requests consume zero generation tokens and return rapidly, latency is **not** hardcoded or guaranteed to be 150–250ms, as it depends on network transit time, geographical location relative to Google API endpoints, and platform load.
+
+---
+
+### 10.5 Guardrail UI State in the Observability Dashboard
+
+When an incident row is clicked in the AG-Grid table, the **RCA Inspector Drawer** slides open. Section 01 displays the dedicated **System 1: Calibrated Decision Gate Card**:
+
+1. **Card Header:**
+   - Title: `System 1: Gemini Decision 1 (0 Output Tokens)`
+   - Model Tag: `gemini-decision-1`
+   - Route Pill: `deep_gemma4_rca` (violet), `fast_rag_only` (teal), or `skip_llm_noise` (gray).
+   - Gate Latency: Measured latency badge (e.g. `184ms gate latency`).
+2. **Metrics Grid:**
+   - **Actionable Prob / Conf:** e.g., `95% prob (92% conf)`.
+   - **Suspect Commit:** Shows probability (e.g. `85% prob`) or warning badge **`Filtered Out < 40%`** if the diff was excluded from Gemma 4.
+   - **Runbook Relevance:** Shows relevance percentage or **`Filtered Out < 40%`** if runbook context was excluded.
+   - **Remediation Safety:** Color-coded pill (`safe_auto_rollback`, `requires_human_approval`, `escalate_dba_finance`) with confidence percentage.
+3. **Guardrail Supervisory Control:**
+   - **Safe Auto-Rollback Eligible:** If `remediation_safety == "safe_auto_rollback"` **AND** confidence $\ge 85\%$:
+     - Displays an active **`Safe Auto-Rollback (Guarded)`** button with caption:
+       `Guarded affordance · Conf: 88% (threshold ≥ 85%)`.
+     - Clicking this button invokes a safe UI notification:
+       > *"Guarded UI affordance: automated rollback execution is non-operational in this environment. No rollback was executed."*
+   - **Approval Locked State:** If confidence $< 85\%$ or the classification requires manual intervention:
+     - The rollback button is replaced by an **`Approval locked: <reason>`** banner with a lock icon:
+       - Low confidence: `Approval locked: Confidence (74%) below 85% safety threshold for auto-rollback.`
+       - Human approval required: `Approval locked: Safety classification requires human approval prior to applying mitigation.`
+       - Escalation required: `Approval locked: High-risk remediation requires escalation to DBA or finance operations.`
+
+---
+
+### 10.6 Step-by-Step Demo Walkthrough for Decision Gate Behaviors
+
+Follow these steps to demonstrate the System 1 / System 2 / embedding triad in action:
+
+#### Step 1: Trigger an Actionable Incident
+Trigger the AlphaFin order checkout defect:
+```bash
+curl -i -X POST http://localhost:8081/api/v1/orders/checkout \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+*Expected response: HTTP 500.*
+
+#### Step 2: Observe Calibrated Incident Badges on Dashboard
+1. Open the dashboard at **`http://localhost:5173`** (Tenant: **AlphaFin Corp**).
+2. Observe the **Incident Table**:
+   - **Service Column:** Shows `order-service` with calibrated severity badge **`P1 (92% conf)`** or **`P0 (98% conf)`**.
+   - **Decision Route & Safety Column:** Displays the route badge (e.g. **`deep_gemma4_rca`**) and safety badge (e.g. **`requires_human_approval`**).
+   - **KPI Card ("Decision-Gated / Auto-Triaged"):** Ticks up to `1` (or incremented count) with the measured decision latency (e.g. `184ms decision latency`).
+
+#### Step 3: Inspect System 1 Decision Gate in the RCA Drawer
+1. Click the `order-service` incident row in the table to open the RCA Drawer.
+2. In **Section 01 (SYSTEM 1: GEMINI DECISION 1 (0 OUTPUT TOKENS))**:
+   - Verify the `gemini-decision-1` model tag and the displayed gate latency badge.
+   - Inspect the **Metrics Grid**: check `Actionable Prob / Conf`, `Suspect Commit`, `Runbook Relevance`, and `Remediation Safety`.
+   - If a Git diff or runbook chunk scored below the 40% threshold, observe the **`Filtered Out < 40%`** label indicating evidence pruning prior to System 2 Gemma 4 generation.
+3. In **Guardrail Control**:
+   - If classified as `safe_auto_rollback` with confidence $\ge 85\%$, click **`Safe Auto-Rollback (Guarded)`** to see the non-operational supervisory safety toast.
+   - If classified as `requires_human_approval` or confidence $< 85\%$, verify that auto-rollback is locked with the explanatory locked reason banner.
+4. Scroll to **Section 02 (SYSTEM 2 GEMMA RCA)**:
+   - Observe the deep root cause diagnosis generated by hosted Gemma 4 (`gemma-4-26b-a4b-it`) using the filtered evidence.
+5. In **Section 04 (MATCHED RUNBOOK)**:
+   - Verify that the authoritative RAG runbook retrieved via `gemini-embedding-2` vector similarity search is preserved.
+
+#### Step 4: Verify Real-Time Telemetry via CLI
+Query the telemetry endpoint to inspect decision metrics directly:
+```bash
+curl -s -X GET http://localhost:8080/api/v1/telemetry \
+  -H "X-API-Key: alphafin-secret-key-1111" \
+  -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" | jq '{totalDecisions, averageDecisionLatencyMs, decisionGatedLogs}'
+```
+Expected output:
+```json
+{
+  "totalDecisions": 1,
+  "averageDecisionLatencyMs": 184.0,
+  "decisionGatedLogs": 0
+}
+```
+
+---
+
+## 11. Complete Working curl Cheat Sheet
 
 Use these snippets to test every major endpoint directly from your terminal.
 
@@ -454,6 +682,8 @@ curl -s -X GET http://localhost:8080/api/v1/incidents \
 # -------------------------------------------------------------
 # 4. Fetch Real-Time Telemetry & Token Cost Savings
 # -------------------------------------------------------------
+# Returns totalLogs, deduplicatedLogs, uniqueIncidents, deduplicationRatio,
+# estimatedCostSavedUsd, decisionGatedLogs, totalDecisions, averageDecisionLatencyMs
 curl -s -X GET http://localhost:8080/api/v1/telemetry \
   -H "X-API-Key: alphafin-secret-key-1111" \
   -H "X-Tenant-ID: 11111111-1111-1111-1111-111111111111" | jq .
@@ -478,7 +708,7 @@ curl -i -X GET http://localhost:8080/api/v1/incidents \
 
 ---
 
-## 11. Database Row-Level Security (RLS) & Testcontainers
+## 12. Database Row-Level Security (RLS) & Testcontainers
 
 ### Dedicated Unprivileged Runtime Role (`airca_app`)
 - PostgreSQL superusers bypass RLS policies by default.
@@ -512,7 +742,7 @@ curl -i -X GET http://localhost:8080/api/v1/incidents \
 
 ---
 
-## 12. Troubleshooting & FAQ
+## 13. Troubleshooting & FAQ
 
 ### 1. Port Conflicts on Host Machine
 If any service fails to bind its port during `docker compose up`:
@@ -527,8 +757,14 @@ If any service fails to bind its port during `docker compose up`:
 - Check browser developer console (F12) for STOMP connection logs.
 - If running frontend on a custom host or port, ensure `CORS_ALLOWED_ORIGINS` in `airca-service` allows your frontend origin.
 
-### 3. AI Configuration: Google GenAI SDK, Embeddings & Hosted Gemma 4 RCA
-- **Unified API Key:** A single `GEMINI_API_KEY` powers both vector embeddings (via `gemini-embedding-2`) and hosted Gemma 4 root-cause analysis (via `gemma-4-26b-a4b-it` or `gemma-4-31b-it`) using the official Google GenAI Java SDK (`com.google.genai:google-genai`). No separate OpenAI key is needed.
+### 3. AI Triad Configuration: Google GenAI SDK, Embeddings, Decision Gate & Hosted Gemma 4 RCA
+- **Unified API Key:** A single `GEMINI_API_KEY` powers all three models in the triad: vector embeddings (`gemini-embedding-2`), the System 1 calibrated decision gate (`gemini-decision-1`), and hosted Gemma 4 root-cause analysis (`gemma-4-26b-a4b-it` or `gemma-4-31b-it`). No separate OpenAI key is needed.
+- **System 1 Decision Gate (`GeminiDecisionClient` & `GeminiDecisionGateService`):**
+  - Model: `gemini-decision-1` (`app.ai.decision.model`).
+  - Client Stack: Targets the official Google Generative Language v1beta REST endpoint (`POST /v1beta/decisions`) using Spring `RestClient` and Jackson, as the current `google-genai` Java SDK artifact (1.0.0) lacks Decisions API methods.
+  - Zero output tokens, evaluating 6 structured questions (actionability, triage route, commit caused bug, runbook applies, severity score, remediation safety).
+  - Persisted on `incidents.decision_gate_json` and displayed in the UI (Section 01 of the RCA Drawer).
+  - Deterministic offline fallback evaluates local heuristics when `GEMINI_API_KEY` is absent or the API fails.
 - **Vector Embeddings (`TextEmbeddingService`):**
   - Model: `gemini-embedding-2` (`app.ai.embedding.model`).
   - Dimensions: `768` (`app.ai.embedding.dimensions: 768`).

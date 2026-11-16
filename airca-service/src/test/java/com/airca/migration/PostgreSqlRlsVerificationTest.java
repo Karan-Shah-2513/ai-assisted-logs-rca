@@ -79,7 +79,7 @@ class PostgreSqlRlsVerificationTest extends AbstractPostgresIntegrationTest {
 
     @Test
     @Order(1)
-    @DisplayName("Run Liquibase changelog master (001-006) as migration user")
+    @DisplayName("Run Liquibase changelog master (001-007) as migration user")
     void executeLiquibaseMigrations() throws Exception {
         assumeTrue(postgresAvailable, "PostgreSQL 16 Testcontainer must be running to execute DB verification");
 

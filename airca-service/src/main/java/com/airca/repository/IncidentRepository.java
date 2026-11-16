@@ -21,6 +21,18 @@ public interface IncidentRepository extends JpaRepository<Incident, UUID> {
 
     long countByTenantId(UUID tenantId);
 
+    @Query("SELECT COUNT(i) FROM Incident i WHERE i.tenantId = :tenantId AND i.decisionGateJson IS NOT NULL")
+    long countDecisionsByTenantId(@Param("tenantId") UUID tenantId);
+
+    @Query(value = """
+            SELECT COALESCE(AVG(CAST(decision_gate_json->>'decisionLatencyMs' AS double precision)), 0.0)
+            FROM incidents
+            WHERE tenant_id = :tenantId
+              AND decision_gate_json IS NOT NULL
+              AND decision_gate_json->>'decisionLatencyMs' IS NOT NULL
+            """, nativeQuery = true)
+    Double findAverageDecisionLatencyMsByTenantId(@Param("tenantId") UUID tenantId);
+
     List<Incident> findAllByTenantIdAndStatusAndLastSeenBefore(
             UUID tenantId, IncidentStatus status, Instant cutoff);
 

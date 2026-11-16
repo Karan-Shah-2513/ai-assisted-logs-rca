@@ -1,8 +1,10 @@
-target/
-**/target/
+**/target/*
+!**/target/*.jar
+**/target/*.jar.original
 .git/
 **/.git/
 .idea/
 **/.idea/
 *.iml
 **/*.iml
+
